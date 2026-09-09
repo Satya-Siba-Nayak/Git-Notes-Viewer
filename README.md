@@ -1,7 +1,5 @@
 # 📚 Git Notes Viewer (Study Portal)
 
-A responsive, lightweight, and modern study resource portal built with pure vanilla HTML5, CSS3, and JavaScript—zero dependencies, no npm, no bundlers, ready to deploy directly to Cloudflare Pages.
-
 ## 🌐 Live Demo & Deployment
 
 - **Custom Domain:** [https://git-notes.satya-nayak.dev](https://git-notes.satya-nayak.dev)
