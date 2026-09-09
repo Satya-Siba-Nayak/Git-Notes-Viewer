@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Study Portal</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <meta name="theme-color" content="#0d1117" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+</head>
+<body>
+  <!-- Mobile overlay -->
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h1 class="logo">📚 Study Portal</h1>
+      <button class="sidebar-close" id="sidebarClose" aria-label="Close sidebar">✕</button>
+    </div>
+    <div class="search-wrapper">
+      <span class="search-icon">🔍</span>
+      <input
+        type="text"
+        id="searchInput"
+        class="search-input"
+        placeholder="Filter files & folders…"
+        autocomplete="off"
+      />
+    </div>
+    <nav class="file-tree" id="fileTree">
+      <div class="loading-spinner" id="sidebarLoader">
+        <div class="spinner"></div>
+        <span>Loading…</span>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main" id="main">
+    <!-- Top bar -->
+    <header class="topbar">
+      <button class="menu-btn" id="menuBtn" aria-label="Open sidebar">☰</button>
+      <nav class="breadcrumbs" id="breadcrumbs" aria-label="Breadcrumb">
+        <a href="#" class="crumb" data-path="">🏠 Root</a>
+      </nav>
+    </header>
+
+    <!-- Toolbar (visible when viewing a file) -->
+    <div class="toolbar hidden" id="toolbar">
+      <button class="btn btn-back" id="backBtn">← Back</button>
+      <span class="toolbar-filename" id="toolbarFilename"></span>
+      <div class="toolbar-actions">
+        <a class="btn btn-download" id="downloadBtn" href="#" download>⬇ Download</a>
+        <button class="btn btn-fullscreen" id="fullscreenBtn">⛶ Full Screen</button>
+      </div>
+    </div>
+
+    <!-- Content area: file listing OR document viewer -->
+    <section class="content" id="content">
+      <!-- File listing grid -->
+      <div class="file-grid" id="fileGrid">
+        <div class="loading-spinner" id="contentLoader">
+          <div class="spinner"></div>
+          <span>Loading contents…</span>
+        </div>
+      </div>
+
+      <!-- Document viewer -->
+      <div class="viewer hidden" id="viewer">
+        <div class="viewer-loading" id="viewerLoading">
+          <div class="spinner"></div>
+          <p>Loading document…</p>
+          <p class="viewer-loading-note">📎 Large files may take a moment to render.</p>
+        </div>
+        <iframe id="viewerFrame" title="Document Viewer" sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
+        <div class="viewer-fallback hidden" id="viewerFallback">
+          <p>Having trouble viewing this file?</p>
+          <a id="fallbackLink" class="btn btn-primary" href="#" target="_blank" rel="noopener">Open in Google Docs Viewer</a>
+          <a id="fallbackDownload" class="btn btn-download" href="#" download>⬇ Download Instead</a>
+        </div>
+      </div>
+
+      <!-- Error state -->
+      <div class="error-state hidden" id="errorState">
+        <div class="error-icon">⚠️</div>
+        <h2>Oops! Something went wrong</h2>
+        <p id="errorMessage">Unable to load content. Please try again later.</p>
+        <button class="btn btn-primary" id="retryBtn">🔄 Retry</button>
+      </div>
+
+      <!-- Empty state -->
+      <div class="empty-state hidden" id="emptyState">
+        <div class="empty-icon">📂</div>
+        <h2>This folder is empty</h2>
+        <p>No files or folders found here.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
