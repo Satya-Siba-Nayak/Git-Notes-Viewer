@@ -26,9 +26,3 @@ sw.js         – service worker
 manifest.json – PWA config
 icons/        – app icons
 ```
-
-## Deploy (Cloudflare Pages)
-
-1. Connect this repo to Cloudflare Pages
-2. Build command: *(empty)*
-3. Output directory: `/`
