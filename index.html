@@ -19,7 +19,7 @@
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <h1 class="logo">📚 Study Portal</h1>
+      <h1 class="logo" id="logo">📚 Study Portal</h1>
       <button class="sidebar-close" id="sidebarClose" aria-label="Close sidebar">✕</button>
     </div>
     <div class="search-wrapper">
@@ -101,6 +101,29 @@
       </div>
     </section>
   </main>
+
+  <!-- Toast pill -->
+  <div class="toast hidden" id="toast"></div>
+
+  <!-- Developer modal -->
+  <div class="dev-overlay hidden" id="devOverlay">
+    <div class="dev-modal">
+      <h3>🔧 Developer Options</h3>
+      <label for="devRepoInput">GitHub Repository URL</label>
+      <input
+        type="text"
+        id="devRepoInput"
+        class="dev-input"
+        placeholder="https://github.com/owner/repo"
+        autocomplete="off"
+      />
+      <p class="dev-hint">e.g. https://github.com/octocat/Hello-World</p>
+      <div class="dev-actions">
+        <button class="btn" id="devCancel">Cancel</button>
+        <button class="btn btn-primary" id="devApply">Apply</button>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

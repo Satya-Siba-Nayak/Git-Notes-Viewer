@@ -7,11 +7,15 @@
   "use strict";
 
   // ── Config ──────────────────────────────────────────────
-  const REPO_OWNER = "Satya-Siba-Nayak";
-  const REPO_NAME = "TYBCA";
-  const API_BASE = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents`;
+  let repoOwner = "Satya-Siba-Nayak";
+  let repoName = "TYBCA";
+  let apiBase = `https://api.github.com/repos/${repoOwner}/${repoName}/contents`;
   const CACHE_PREFIX = "studyportal_cache_";
   const LAST_PATH_KEY = "studyportal_lastpath";
+
+  function rebuildApiBase() {
+    apiBase = `https://api.github.com/repos/${repoOwner}/${repoName}/contents`;
+  }
 
   // ── DOM refs ────────────────────────────────────────────
   const sidebar = document.getElementById("sidebar");
@@ -39,6 +43,12 @@
   const errorMessage = document.getElementById("errorMessage");
   const retryBtn = document.getElementById("retryBtn");
   const emptyState = document.getElementById("emptyState");
+  const logo = document.getElementById("logo");
+  const toast = document.getElementById("toast");
+  const devOverlay = document.getElementById("devOverlay");
+  const devRepoInput = document.getElementById("devRepoInput");
+  const devCancel = document.getElementById("devCancel");
+  const devApply = document.getElementById("devApply");
 
   // ── State ───────────────────────────────────────────────
   let currentPath = "";
@@ -93,7 +103,7 @@
 
   // ── API fetch with caching ─────────────────────────────
   async function fetchContents(path = "") {
-    const cacheKey = CACHE_PREFIX + path;
+    const cacheKey = `${CACHE_PREFIX}${repoOwner}_${repoName}_${path}`;
     const cached = sessionStorage.getItem(cacheKey);
     if (cached) {
       try {
@@ -103,7 +113,7 @@
       }
     }
 
-    const url = path ? `${API_BASE}/${path}` : API_BASE;
+    const url = path ? `${apiBase}/${path}` : apiBase;
     const res = await fetch(url);
 
     // Rate-limit check
@@ -148,8 +158,10 @@
     currentPath = path;
     currentFile = null;
 
-    // Persist last visited path for session restore
-    try { localStorage.setItem(LAST_PATH_KEY, path); } catch { /* quota */ }
+    // Persist last visited path for session restore (default repo only)
+    if (repoOwner === "Satya-Siba-Nayak" && repoName === "TYBCA") {
+      try { localStorage.setItem(LAST_PATH_KEY, path); } catch { /* quota */ }
+    }
 
     // Show loading
     hideAll();
@@ -168,6 +180,8 @@
     try {
       const items = await fetchContents(path);
       currentItems = Array.isArray(items) ? items : [];
+      // Filter out dotfiles (e.g. .gitignore)
+      currentItems = currentItems.filter((item) => !item.name.startsWith("."));
       // Sort: dirs first, then alpha
       currentItems.sort((a, b) => {
         if (a.type === "dir" && b.type !== "dir") return -1;
@@ -460,7 +474,7 @@
 
   retryBtn.addEventListener("click", () => {
     // Clear cache for current path and retry
-    sessionStorage.removeItem(CACHE_PREFIX + currentPath);
+    sessionStorage.removeItem(`${CACHE_PREFIX}${repoOwner}_${repoName}_${currentPath}`);
     navigateTo(currentPath);
   });
 
@@ -469,6 +483,103 @@
     const div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  // ── Toast Pill (Android-style) ─────────────────────────
+  let toastTimeout = null;
+  function showToast(msg, duration = 2000) {
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.classList.remove("hidden");
+    if (toastTimeout) clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => {
+      toast.classList.add("hidden");
+    }, duration);
+  }
+
+  // ── Developer Mode (7 clicks on logo) ──────────────────
+  let logoClicks = 0;
+  let logoClickTimer = null;
+
+  if (logo) {
+    logo.addEventListener("click", () => {
+      logoClicks++;
+      if (logoClickTimer) clearTimeout(logoClickTimer);
+      logoClickTimer = setTimeout(() => {
+        logoClicks = 0;
+      }, 3000);
+
+      if (logoClicks > 3 && logoClicks < 7) {
+        const remaining = 7 - logoClicks;
+        showToast(`You are now ${remaining} step${remaining === 1 ? "" : "s"} away from Developer Options.`);
+      } else if (logoClicks >= 7) {
+        logoClicks = 0;
+        showToast("Developer Options opened!");
+        openDevModal();
+      }
+    });
+  }
+
+  function openDevModal() {
+    if (!devOverlay) return;
+    devRepoInput.value = `https://github.com/${repoOwner}/${repoName}`;
+    devOverlay.classList.remove("hidden");
+    setTimeout(() => {
+      devRepoInput.focus();
+      devRepoInput.select();
+    }, 100);
+  }
+
+  function closeDevModal() {
+    if (!devOverlay) return;
+    devOverlay.classList.add("hidden");
+  }
+
+  if (devCancel) devCancel.addEventListener("click", closeDevModal);
+  if (devOverlay) {
+    devOverlay.addEventListener("click", (e) => {
+      if (e.target === devOverlay) closeDevModal();
+    });
+  }
+
+  function applyCustomRepo() {
+    let val = (devRepoInput.value || "").trim();
+    if (!val) return;
+
+    // Normalize input (support URLs or owner/repo format)
+    val = val.replace(/^https?:\/\//i, "");
+    val = val.replace(/^github\.com\//i, "");
+    val = val.replace(/\.git$/i, "");
+    val = val.replace(/\/+$/, "");
+
+    const parts = val.split("/").filter(Boolean);
+    if (parts.length < 2) {
+      showToast("Invalid format. Use: owner/repo");
+      return;
+    }
+
+    const newOwner = parts[0];
+    const newRepo = parts[1];
+
+    repoOwner = newOwner;
+    repoName = newRepo;
+    rebuildApiBase();
+
+    closeDevModal();
+    showToast(`Loaded ${newOwner}/${newRepo}`);
+    navigateTo("");
+  }
+
+  if (devApply) devApply.addEventListener("click", applyCustomRepo);
+  if (devRepoInput) {
+    devRepoInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        applyCustomRepo();
+      } else if (e.key === "Escape") {
+        closeDevModal();
+      }
+    });
   }
 
   // ── Boot ────────────────────────────────────────────────
