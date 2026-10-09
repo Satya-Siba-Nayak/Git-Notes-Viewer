@@ -1,6 +1,6 @@
 /* =========================================================
    TYBCA Study Portal – app.js
-   Pure vanilla JS, zero dependencies.
+   Modern, Pure Vanilla JS, Zero Dependencies
    ========================================================= */
 
 (() => {
@@ -18,6 +18,7 @@
   let currentRepo = { ...DEFAULT_REPO };
   const CACHE_PREFIX = "studyportal_cache_";
   const LAST_PATH_KEY = "studyportal_lastpath";
+  const RECENT_REPOS_KEY = "studyportal_recent_repos";
 
   const PLATFORMS = {
     github: { name: "GitHub", icon: "🐙", host: "github.com" },
@@ -27,13 +28,29 @@
     bitbucket: { name: "Bitbucket", icon: "🪣", host: "bitbucket.org" }
   };
 
-  function isDefaultRepo() {
+  function isDefaultRepo(repo = currentRepo) {
     return (
-      currentRepo.platform === DEFAULT_REPO.platform &&
-      currentRepo.host === DEFAULT_REPO.host &&
-      currentRepo.owner === DEFAULT_REPO.owner &&
-      currentRepo.name === DEFAULT_REPO.name
+      repo.platform === DEFAULT_REPO.platform &&
+      repo.host === DEFAULT_REPO.host &&
+      repo.owner === DEFAULT_REPO.owner &&
+      repo.name === DEFAULT_REPO.name
     );
+  }
+
+  function getRepoString(repo = currentRepo) {
+    if (repo.platform === "github" && repo.host === "github.com") {
+      return `${repo.owner}/${repo.name}`;
+    }
+    if (repo.host === "gitlab.com") {
+      return `gl:${repo.owner}/${repo.name}`;
+    }
+    if (repo.host === "codeberg.org") {
+      return `cb:${repo.owner}/${repo.name}`;
+    }
+    if (repo.host === "bitbucket.org") {
+      return `bb:${repo.owner}/${repo.name}`;
+    }
+    return `https://${repo.host}/${repo.owner}/${repo.name}`;
   }
 
   // ── Platform Adapters ───────────────────────────────────
@@ -201,6 +218,13 @@
   const downloadBtn = document.getElementById("downloadBtn");
   const fullscreenBtn = document.getElementById("fullscreenBtn");
   const shareBtn = document.getElementById("shareBtn");
+  const topbarShareBtn = document.getElementById("topbarShareBtn");
+  const repoSwitcherBtn = document.getElementById("repoSwitcherBtn");
+  const repoSwitcherDropdown = document.getElementById("repoSwitcherDropdown");
+  const switcherIcon = document.getElementById("switcherIcon");
+  const switcherName = document.getElementById("switcherName");
+  const switcherList = document.getElementById("switcherList");
+  const switcherCustomBtn = document.getElementById("switcherCustomBtn");
   const fileGrid = document.getElementById("fileGrid");
   const contentLoader = document.getElementById("contentLoader");
   const viewer = document.getElementById("viewer");
@@ -209,9 +233,34 @@
   const codeViewer = document.getElementById("codeViewer");
   const codeLangBadge = document.getElementById("codeLangBadge");
   const codeStats = document.getElementById("codeStats");
+  const codeWrapToggle = document.getElementById("codeWrapToggle");
   const copyCodeBtn = document.getElementById("copyCodeBtn");
+  const codeScrollArea = document.getElementById("codeScrollArea");
   const codeLines = document.getElementById("codeLines");
+  const markdownViewer = document.getElementById("markdownViewer");
+  const markdownBody = document.getElementById("markdownBody");
+  const mdReadingTime = document.getElementById("mdReadingTime");
+  const mdModeToggle = document.getElementById("mdModeToggle");
+  const copyMdBtn = document.getElementById("copyMdBtn");
+  const mediaViewer = document.getElementById("mediaViewer");
+  const imageViewerContainer = document.getElementById("imageViewerContainer");
+  const imageInfo = document.getElementById("imageInfo");
+  const zoomInBtn = document.getElementById("zoomInBtn");
+  const zoomOutBtn = document.getElementById("zoomOutBtn");
+  const zoomResetBtn = document.getElementById("zoomResetBtn");
+  const zoomFitBtn = document.getElementById("zoomFitBtn");
+  const zoomLevel = document.getElementById("zoomLevel");
+  const imageStage = document.getElementById("imageStage");
+  const mediaImage = document.getElementById("mediaImage");
+  const videoViewerContainer = document.getElementById("videoViewerContainer");
+  const mediaVideo = document.getElementById("mediaVideo");
+  const audioViewerContainer = document.getElementById("audioViewerContainer");
+  const audioTitle = document.getElementById("audioTitle");
+  const audioSub = document.getElementById("audioSub");
+  const mediaAudio = document.getElementById("mediaAudio");
   const viewerFallback = document.getElementById("viewerFallback");
+  const fallbackNotice = document.getElementById("fallbackNotice");
+  const fallbackEngineToggle = document.getElementById("fallbackEngineToggle");
   const fallbackLink = document.getElementById("fallbackLink");
   const fallbackDownload = document.getElementById("fallbackDownload");
   const errorState = document.getElementById("errorState");
@@ -224,6 +273,8 @@
   const devOverlay = document.getElementById("devOverlay");
   const devRepoInput = document.getElementById("devRepoInput");
   const devPlatformsGuide = document.getElementById("devPlatformsGuide");
+  const devRecentSection = document.getElementById("devRecentSection");
+  const devRecentList = document.getElementById("devRecentList");
   const devCancel = document.getElementById("devCancel");
   const devApply = document.getElementById("devApply");
   const devReset = document.getElementById("devReset");
@@ -232,10 +283,21 @@
   // ── State ───────────────────────────────────────────────
   let currentPath = "";
   let currentItems = [];
-  let currentFile = null; // { name, download_url, html_url, ... }
-  let currentRawCode = "";
+  let currentFile = null;
+  let currentRawText = "";
+  let currentDocEngine = "google"; // "google" | "office" | "native"
+  let isCodeWrapped = false;
+  let isMarkdownRaw = false;
 
-  // ── Code Extensions & Languages ─────────────────────────
+  // Zoom & Pan state for image preview
+  let zoomScale = 1;
+  let panX = 0;
+  let panY = 0;
+  let isPanning = false;
+  let startPanX = 0;
+  let startPanY = 0;
+
+  // ── Extension & Language Classification ─────────────────
   const CODE_EXT_MAP = {
     js: "JavaScript", mjs: "JavaScript", cjs: "JavaScript", jsx: "React JSX",
     ts: "TypeScript", tsx: "React TSX",
@@ -254,11 +316,16 @@
     xml: "XML", svg: "SVG",
     yaml: "YAML", yml: "YAML",
     toml: "TOML", ini: "INI", env: "ENV",
-    md: "Markdown", markdown: "Markdown",
-    txt: "Plain Text", log: "Log",
+    txt: "Plain Text", log: "Log", csv: "CSV",
     sh: "Shell", bash: "Bash", zsh: "Zsh", bat: "Batch", ps1: "PowerShell",
     dockerfile: "Dockerfile", makefile: "Makefile"
   };
+
+  const DOC_EXTS = ["pdf", "ppt", "pptx", "doc", "docx", "xls", "xlsx"];
+  const MD_EXTS = ["md", "markdown"];
+  const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico"];
+  const VIDEO_EXTS = ["mp4", "webm", "ogg", "mov", "mkv"];
+  const AUDIO_EXTS = ["mp3", "wav", "ogg", "m4a", "aac", "flac"];
 
   // ── Helpers ─────────────────────────────────────────────
   function getFileExt(name) {
@@ -269,12 +336,31 @@
     const ext = getFileExt(name);
     if (ext in CODE_EXT_MAP) return true;
     const lower = name.toLowerCase();
-    return ["dockerfile", "makefile", "license", "readme", ".gitignore", ".env"].includes(lower);
+    return ["dockerfile", "makefile", "license", "notice", ".env"].includes(lower);
+  }
+
+  function isMarkdown(name) {
+    return MD_EXTS.includes(getFileExt(name));
+  }
+
+  function isImage(name) {
+    return IMAGE_EXTS.includes(getFileExt(name));
+  }
+
+  function isVideo(name) {
+    return VIDEO_EXTS.includes(getFileExt(name));
+  }
+
+  function isAudio(name) {
+    return AUDIO_EXTS.includes(getFileExt(name));
+  }
+
+  function isDocument(name) {
+    return DOC_EXTS.includes(getFileExt(name));
   }
 
   function isViewable(name) {
-    const ext = getFileExt(name);
-    return ["pdf", "ppt", "pptx"].includes(ext) || isCodeOrText(name);
+    return isDocument(name) || isMarkdown(name) || isCodeOrText(name) || isImage(name) || isVideo(name) || isAudio(name);
   }
 
   function getIcon(item) {
@@ -283,12 +369,14 @@
     if (ext === "pdf") return "📄";
     if (["ppt", "pptx"].includes(ext)) return "📊";
     if (["doc", "docx"].includes(ext)) return "📝";
-    if (["xls", "xlsx"].includes(ext)) return "📊";
-    if (["jpg", "jpeg", "png", "gif", "svg", "webp"].includes(ext)) return "🖼️";
+    if (["xls", "xlsx"].includes(ext)) return "📈";
+    if (IMAGE_EXTS.includes(ext)) return "🖼️";
+    if (VIDEO_EXTS.includes(ext)) return "🎬";
+    if (AUDIO_EXTS.includes(ext)) return "🎵";
+    if (MD_EXTS.includes(ext)) return "📖";
     if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "📦";
-    if (["mp4", "mkv", "avi", "mov"].includes(ext)) return "🎬";
     if (["py", "js", "ts", "html", "css", "java", "c", "cpp", "cs", "sql", "sh", "rs", "go"].includes(ext)) return "💻";
-    if (["txt", "md", "log", "json", "yaml", "yml"].includes(ext)) return "📝";
+    if (["txt", "log", "json", "yaml", "yml"].includes(ext)) return "📄";
     return "📄";
   }
 
@@ -298,6 +386,245 @@
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
     return (bytes / 1048576).toFixed(1) + " MB";
   }
+
+  function escapeHtml(str) {
+    if (!str) return "";
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // ── Clipboard with Robust Fallback ──────────────────────
+  async function copyToClipboard(text) {
+    let success = false;
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        success = true;
+      } catch {
+        success = false;
+      }
+    }
+    if (!success) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.top = "-9999px";
+        ta.style.left = "-9999px";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        success = document.execCommand("copy");
+        ta.remove();
+      } catch {
+        success = false;
+      }
+    }
+    return success;
+  }
+
+  // ── Toast Pill (Android-style) ─────────────────────────
+  let toastTimeout = null;
+  function showToast(msg, duration = 2200) {
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.classList.remove("hidden");
+    if (toastTimeout) clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => {
+      toast.classList.add("hidden");
+    }, duration);
+  }
+
+  // ── Recent Repositories Management ─────────────────────
+  function getRecentRepos() {
+    try {
+      const data = localStorage.getItem(RECENT_REPOS_KEY);
+      if (!data) return [];
+      const list = JSON.parse(data);
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveRecentRepo(repo) {
+    if (!repo || !repo.owner || !repo.name) return;
+    try {
+      const list = getRecentRepos().filter(
+        (r) => !(r.host === repo.host && r.owner.toLowerCase() === repo.owner.toLowerCase() && r.name.toLowerCase() === repo.name.toLowerCase())
+      );
+      list.unshift({
+        platform: repo.platform || "github",
+        host: repo.host || "github.com",
+        owner: repo.owner,
+        name: repo.name,
+        branch: repo.branch || "HEAD",
+        timestamp: Date.now()
+      });
+      // Keep up to 8 recent repos
+      const trimmed = list.slice(0, 8);
+      localStorage.setItem(RECENT_REPOS_KEY, JSON.stringify(trimmed));
+      renderRecentReposList();
+    } catch { /* storage quota */ }
+  }
+
+  function removeRecentRepo(host, owner, name) {
+    try {
+      const list = getRecentRepos().filter(
+        (r) => !(r.host === host && r.owner.toLowerCase() === owner.toLowerCase() && r.name.toLowerCase() === name.toLowerCase())
+      );
+      localStorage.setItem(RECENT_REPOS_KEY, JSON.stringify(list));
+      renderRecentReposList();
+    } catch { /* storage */ }
+  }
+
+  function renderRecentReposList() {
+    const list = getRecentRepos();
+
+    // 1. Render in Topbar Quick Switcher Dropdown
+    if (switcherList) {
+      switcherList.innerHTML = "";
+
+      // Default repo item
+      const defItem = document.createElement("div");
+      defItem.className = `switcher-item ${isDefaultRepo() ? "active" : ""}`;
+      defItem.innerHTML = `
+        <div class="switcher-item-main">
+          <span class="switcher-item-icon">🐙</span>
+          <div class="switcher-item-info">
+            <span class="switcher-item-name">TYBCA</span>
+            <span class="switcher-item-sub">Default Portal</span>
+          </div>
+        </div>
+      `;
+      defItem.addEventListener("click", () => {
+        closeRepoSwitcher();
+        if (!isDefaultRepo()) resetToDefaultRepo();
+      });
+      switcherList.appendChild(defItem);
+
+      list.forEach((repo) => {
+        if (isDefaultRepo(repo)) return;
+        const platInfo = PLATFORMS[repo.platform] || { icon: "📁", name: "Git" };
+        const isActive = !isDefaultRepo() && currentRepo.host === repo.host && currentRepo.owner === repo.owner && currentRepo.name === repo.name;
+
+        const item = document.createElement("div");
+        item.className = `switcher-item ${isActive ? "active" : ""}`;
+        item.innerHTML = `
+          <div class="switcher-item-main">
+            <span class="switcher-item-icon">${platInfo.icon}</span>
+            <div class="switcher-item-info">
+              <span class="switcher-item-name">${escapeHtml(repo.name)}</span>
+              <span class="switcher-item-sub">${escapeHtml(repo.owner)}</span>
+            </div>
+          </div>
+          <button type="button" class="switcher-item-remove" title="Remove from list">✕</button>
+        `;
+
+        item.querySelector(".switcher-item-main").addEventListener("click", () => {
+          closeRepoSwitcher();
+          loadCustomRepo(repo);
+        });
+
+        item.querySelector(".switcher-item-remove").addEventListener("click", (e) => {
+          e.stopPropagation();
+          removeRecentRepo(repo.host, repo.owner, repo.name);
+        });
+
+        switcherList.appendChild(item);
+      });
+    }
+
+    // 2. Render in Developer Modal Recent Section
+    if (devRecentSection && devRecentList) {
+      if (list.length === 0) {
+        devRecentSection.classList.add("hidden");
+      } else {
+        devRecentSection.classList.remove("hidden");
+        devRecentList.innerHTML = "";
+        list.forEach((repo) => {
+          const platInfo = PLATFORMS[repo.platform] || { icon: "📁" };
+          const row = document.createElement("div");
+          row.className = "dev-recent-item";
+          row.innerHTML = `
+            <span>${platInfo.icon} <strong>${escapeHtml(repo.owner)}/${escapeHtml(repo.name)}</strong></span>
+            <span style="font-size: 0.72rem; color: var(--text-muted);">${repo.host}</span>
+          `;
+          row.addEventListener("click", () => {
+            closeDevModal();
+            loadCustomRepo(repo);
+          });
+          devRecentList.appendChild(row);
+        });
+      }
+    }
+  }
+
+  // ── Update Repo UI Elements ─────────────────────────────
+  function updateRepoUI() {
+    const isDef = isDefaultRepo();
+    const platInfo = PLATFORMS[currentRepo.platform] || { icon: "📁", name: "Git" };
+
+    // Update document title
+    document.title = isDef ? "Study Portal" : `${currentRepo.name} – Study Portal`;
+
+    // Sidebar repo badge
+    if (repoBadge) {
+      if (isDef) {
+        repoBadge.classList.add("hidden");
+      } else {
+        repoBadge.classList.remove("hidden");
+        repoBadge.innerHTML = `<span>${platInfo.icon}</span> <span>${escapeHtml(currentRepo.owner)}/${escapeHtml(currentRepo.name)}</span>`;
+      }
+    }
+
+    // Topbar switcher button
+    if (switcherIcon) switcherIcon.textContent = platInfo.icon;
+    if (switcherName) switcherName.textContent = isDef ? "TYBCA" : currentRepo.name;
+
+    // Refresh recent list highlight
+    renderRecentReposList();
+  }
+
+  // ── Quick Switcher Dropdown Toggle ──────────────────────
+  function openRepoSwitcher() {
+    if (!repoSwitcherDropdown) return;
+    renderRecentReposList();
+    repoSwitcherDropdown.classList.remove("hidden");
+    repoSwitcherBtn.setAttribute("aria-expanded", "true");
+  }
+
+  function closeRepoSwitcher() {
+    if (!repoSwitcherDropdown) return;
+    repoSwitcherDropdown.classList.add("hidden");
+    repoSwitcherBtn.setAttribute("aria-expanded", "false");
+  }
+
+  if (repoSwitcherBtn) {
+    repoSwitcherBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (repoSwitcherDropdown.classList.contains("hidden")) {
+        openRepoSwitcher();
+      } else {
+        closeRepoSwitcher();
+      }
+    });
+  }
+
+  if (switcherCustomBtn) {
+    switcherCustomBtn.addEventListener("click", () => {
+      closeRepoSwitcher();
+      openDevModal();
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    if (repoSwitcherDropdown && !repoSwitcherDropdown.contains(e.target) && !repoSwitcherBtn.contains(e.target)) {
+      closeRepoSwitcher();
+    }
+  });
 
   // ── Sidebar toggle (mobile) ────────────────────────────
   function openSidebar() {
@@ -328,14 +655,14 @@
     const adapter = ADAPTERS[currentRepo.platform] || ADAPTERS.github;
     const items = await adapter.fetchContents(currentRepo, path);
 
-    // Filter out dotfiles (e.g. .gitignore)
+    // Hide hidden dotfiles (.gitignore, etc.)
     const cleaned = (items || []).filter((item) => !item.name.startsWith("."));
 
     // Cache the directory listings
     if (Array.isArray(cleaned)) {
       try {
         sessionStorage.setItem(cacheKey, JSON.stringify(cleaned));
-      } catch { /* storage full */ }
+      } catch { /* storage quota */ }
     }
     return cleaned;
   }
@@ -348,7 +675,7 @@
     banner.className = "rate-limit-banner";
     banner.innerHTML = `
       <span>⚠️ API rate limit is low (${remaining} requests remaining). Cached data will be used where possible.</span>
-      <button aria-label="Dismiss">✕</button>
+      <button type="button" aria-label="Dismiss">✕</button>
     `;
     banner.querySelector("button").addEventListener("click", () => banner.remove());
     document.getElementById("main").prepend(banner);
@@ -360,17 +687,7 @@
 
     // Repo param
     if (!isDefaultRepo()) {
-      if (currentRepo.platform === "github" && currentRepo.host === "github.com") {
-        url.searchParams.set("repo", `${currentRepo.owner}/${currentRepo.name}`);
-      } else if (currentRepo.host === "gitlab.com") {
-        url.searchParams.set("repo", `gl:${currentRepo.owner}/${currentRepo.name}`);
-      } else if (currentRepo.host === "codeberg.org") {
-        url.searchParams.set("repo", `cb:${currentRepo.owner}/${currentRepo.name}`);
-      } else if (currentRepo.host === "bitbucket.org") {
-        url.searchParams.set("repo", `bb:${currentRepo.owner}/${currentRepo.name}`);
-      } else {
-        url.searchParams.set("repo", `https://${currentRepo.host}/${currentRepo.owner}/${currentRepo.name}`);
-      }
+      url.searchParams.set("repo", getRepoString(currentRepo));
     }
 
     if (file) {
@@ -412,16 +729,18 @@
     // Update breadcrumbs
     renderBreadcrumbs(path);
 
-    // Hide toolbar/viewer
+    // Hide toolbar & viewers
     toolbar.classList.add("hidden");
     viewer.classList.add("hidden");
     codeViewer.classList.add("hidden");
+    markdownViewer.classList.add("hidden");
+    mediaViewer.classList.add("hidden");
     viewerFallback.classList.add("hidden");
 
     try {
       const items = await fetchContents(path);
       currentItems = Array.isArray(items) ? items : [];
-      // Sort: dirs first, then alpha
+      // Sort: dirs first, then alphabetical
       currentItems.sort((a, b) => {
         if (a.type === "dir" && b.type !== "dir") return -1;
         if (a.type !== "dir" && b.type === "dir") return 1;
@@ -442,13 +761,14 @@
     fileGrid.classList.add("hidden");
     viewer.classList.add("hidden");
     codeViewer.classList.add("hidden");
+    markdownViewer.classList.add("hidden");
+    mediaViewer.classList.add("hidden");
     errorState.classList.add("hidden");
     emptyState.classList.add("hidden");
     viewerFallback.classList.add("hidden");
   }
 
   function clearFileCards() {
-    // Keep the loader, remove cards
     const cards = fileGrid.querySelectorAll(".file-card");
     cards.forEach((c) => c.remove());
   }
@@ -497,14 +817,13 @@
   }
 
   function renderSidebarTree(items) {
-    // Clear existing tree items but keep loader
     const existing = fileTree.querySelectorAll(".tree-item");
     existing.forEach((el) => el.remove());
     sidebarLoader.classList.add("hidden");
 
-    // Add a back item if not at root
     if (currentPath) {
       const backItem = document.createElement("button");
+      backItem.type = "button";
       backItem.className = "tree-item";
       backItem.innerHTML = `
         <span class="tree-item-icon">⬆️</span>
@@ -521,6 +840,7 @@
 
     items.forEach((item) => {
       const el = document.createElement("button");
+      el.type = "button";
       el.className = "tree-item";
       el.dataset.name = item.name.toLowerCase();
       el.innerHTML = `
@@ -594,16 +914,8 @@
     } else if (isViewable(item.name)) {
       openViewer(item);
     } else if (item.download_url) {
-      // Non-viewable: trigger download
       window.open(item.download_url, "_blank");
     }
-  }
-
-  // ── Escape HTML ────────────────────────────────────────
-  function escapeHtml(str) {
-    const div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
   }
 
   // ── Syntax Highlighter (Zero-dependency) ───────────────
@@ -677,7 +989,187 @@
     return escaped;
   }
 
-  // ── Document & Code viewer ─────────────────────────────
+  // ── Zero-dependency Markdown Parser ─────────────────────
+  function parseMarkdown(md, baseRawUrl = "") {
+    if (!md) return "";
+
+    const lines = md.split(/\r\n|\r|\n/);
+    const htmlParts = [];
+    let inCodeBlock = false;
+    let codeBlockLang = "";
+    let codeBlockContent = [];
+    let inList = false;
+    let listType = "ul";
+    let inTable = false;
+    let tableRows = [];
+
+    function flushList() {
+      if (inList) {
+        htmlParts.push(`</${listType}>`);
+        inList = false;
+      }
+    }
+
+    function flushTable() {
+      if (inTable && tableRows.length > 0) {
+        let tableHtml = "<table>";
+        // First row is header
+        const headerCells = tableRows[0];
+        tableHtml += "<thead><tr>" + headerCells.map((c) => `<th>${formatInline(c)}</th>`).join("") + "</tr></thead><tbody>";
+        // Rest are rows (skipping delimiter row if index 1)
+        const startIndex = tableRows.length > 1 && tableRows[1].every((c) => /^:?-+:?$/.test(c.trim())) ? 2 : 1;
+        for (let i = startIndex; i < tableRows.length; i++) {
+          tableHtml += "<tr>" + tableRows[i].map((c) => `<td>${formatInline(c)}</td>`).join("") + "</tr>";
+        }
+        tableHtml += "</tbody></table>";
+        htmlParts.push(tableHtml);
+        inTable = false;
+        tableRows = [];
+      }
+    }
+
+    function formatInline(text) {
+      let t = escapeHtml(text);
+      // Code spans
+      t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+      // Bold + italic
+      t = t.replace(/\*\*\*(.*?)\*\*\*/g, "<strong><em>$1</em></strong>");
+      t = t.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+      t = t.replace(/\*(.*?)\*/g, "<em>$1</em>");
+      t = t.replace(/~~(.*?)~~/g, "<del>$1</del>");
+      // Images: ![alt](url)
+      t = t.replace(/!\[(.*?)\]\((.*?)\)/g, (match, alt, src) => {
+        let fullSrc = src.trim();
+        if (baseRawUrl && !/^https?:\/\//i.test(fullSrc)) {
+          fullSrc = baseRawUrl + fullSrc.replace(/^\.?\//, "");
+        }
+        return `<img src="${fullSrc}" alt="${alt}" loading="lazy" class="md-img" />`;
+      });
+      // Links: [text](url)
+      t = t.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      return t;
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Code blocks
+      if (line.trim().startsWith("```")) {
+        if (!inCodeBlock) {
+          flushList();
+          flushTable();
+          inCodeBlock = true;
+          codeBlockLang = line.trim().slice(3).trim();
+          codeBlockContent = [];
+        } else {
+          inCodeBlock = false;
+          const codeText = codeBlockContent.join("\n");
+          htmlParts.push(`<pre><code class="lang-${escapeHtml(codeBlockLang)}">${escapeHtml(codeText)}</code></pre>`);
+        }
+        continue;
+      }
+
+      if (inCodeBlock) {
+        codeBlockContent.push(line);
+        continue;
+      }
+
+      const trimmed = line.trim();
+
+      // Empty line
+      if (!trimmed) {
+        flushList();
+        flushTable();
+        continue;
+      }
+
+      // Horizontal Rule
+      if (/^(\-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+        flushList();
+        flushTable();
+        htmlParts.push("<hr />");
+        continue;
+      }
+
+      // Headers (# H1 to ###### H6)
+      const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
+      if (headerMatch) {
+        flushList();
+        flushTable();
+        const level = headerMatch[1].length;
+        htmlParts.push(`<h${level}>${formatInline(headerMatch[2])}</h${level}>`);
+        continue;
+      }
+
+      // Blockquote
+      if (trimmed.startsWith(">")) {
+        flushList();
+        flushTable();
+        const quoteText = trimmed.replace(/^>\s?/, "");
+        htmlParts.push(`<blockquote>${formatInline(quoteText)}</blockquote>`);
+        continue;
+      }
+
+      // Tables (| col | col |)
+      if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+        flushList();
+        inTable = true;
+        const cells = trimmed
+          .slice(1, -1)
+          .split("|")
+          .map((c) => c.trim());
+        tableRows.push(cells);
+        continue;
+      } else {
+        flushTable();
+      }
+
+      // Unordered lists (- or *)
+      const ulMatch = line.match(/^(\s*)[-*]\s+(.*)$/);
+      if (ulMatch) {
+        if (!inList || listType !== "ul") {
+          flushList();
+          htmlParts.push("<ul>");
+          inList = true;
+          listType = "ul";
+        }
+        let itemContent = ulMatch[2];
+        // Task list checkbox
+        if (itemContent.startsWith("[ ] ")) {
+          itemContent = '<input type="checkbox" disabled /> ' + itemContent.slice(4);
+        } else if (itemContent.startsWith("[x] ") || itemContent.startsWith("[X] ")) {
+          itemContent = '<input type="checkbox" checked disabled /> ' + itemContent.slice(4);
+        }
+        htmlParts.push(`<li>${formatInline(itemContent)}</li>`);
+        continue;
+      }
+
+      // Ordered lists (1.)
+      const olMatch = line.match(/^(\s*)\d+\.\s+(.*)$/);
+      if (olMatch) {
+        if (!inList || listType !== "ol") {
+          flushList();
+          htmlParts.push("<ol>");
+          inList = true;
+          listType = "ol";
+        }
+        htmlParts.push(`<li>${formatInline(olMatch[2])}</li>`);
+        continue;
+      }
+
+      // Paragraph
+      flushList();
+      flushTable();
+      htmlParts.push(`<p>${formatInline(trimmed)}</p>`);
+    }
+
+    flushList();
+    flushTable();
+
+    return htmlParts.join("\n");
+  }
+
+  // ── Open Viewer Master Controller ──────────────────────
   async function openViewer(item, updateHistory = true) {
     currentFile = item;
     hideAll();
@@ -695,11 +1187,108 @@
     const ext = getFileExt(item.name);
     const encodedUrl = encodeURIComponent(item.download_url);
 
-    if (isCodeOrText(item.name)) {
-      // CODE & TEXT VIEWER
+    // 1. MARKDOWN NOTES VIEWER
+    if (isMarkdown(item.name)) {
       viewer.classList.remove("hidden");
-      viewerFrame.classList.add("hidden");
-      viewerFallback.classList.add("hidden");
+      markdownViewer.classList.remove("hidden");
+      viewerLoading.classList.remove("loaded");
+      mdReadingTime.textContent = "Loading notes…";
+      markdownBody.innerHTML = "";
+
+      try {
+        const res = await fetch(item.download_url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch notes.`);
+        const text = await res.text();
+        currentRawText = text;
+
+        const wordCount = text.trim().split(/\s+/).length;
+        const readMin = Math.max(1, Math.ceil(wordCount / 200));
+        mdReadingTime.textContent = `${readMin} min read • ${wordCount} words`;
+
+        // Base URL for relative image assets
+        let baseRawUrl = "";
+        if (currentRepo.platform === "github") {
+          const folder = item.path.includes("/") ? item.path.substring(0, item.path.lastIndexOf("/") + 1) : "";
+          baseRawUrl = `https://raw.githubusercontent.com/${currentRepo.owner}/${currentRepo.name}/${currentRepo.branch || "HEAD"}/${folder}`;
+        }
+
+        markdownBody.innerHTML = parseMarkdown(text, baseRawUrl);
+        isMarkdownRaw = false;
+        mdModeToggle.textContent = "💻 Raw Code";
+      } catch (err) {
+        markdownBody.innerHTML = `<div class="error-state"><div class="error-icon">⚠️</div><h2>Error loading notes</h2><p>${escapeHtml(err.message)}</p></div>`;
+      } finally {
+        viewerLoading.classList.add("loaded");
+      }
+      closeSidebar();
+      return;
+    }
+
+    // 2. IMAGE PREVIEW (with Zoom & Pan)
+    if (isImage(item.name)) {
+      viewer.classList.remove("hidden");
+      mediaViewer.classList.remove("hidden");
+      imageViewerContainer.classList.remove("hidden");
+      videoViewerContainer.classList.add("hidden");
+      audioViewerContainer.classList.add("hidden");
+      viewerLoading.classList.remove("loaded");
+
+      resetImageZoom();
+      mediaImage.src = item.download_url;
+      imageInfo.textContent = "Loading image…";
+
+      mediaImage.onload = () => {
+        viewerLoading.classList.add("loaded");
+        const w = mediaImage.naturalWidth;
+        const h = mediaImage.naturalHeight;
+        const sizeStr = item.size ? ` • ${formatSize(item.size)}` : "";
+        imageInfo.textContent = `${w} × ${h} px${sizeStr}`;
+      };
+
+      mediaImage.onerror = () => {
+        viewerLoading.classList.add("loaded");
+        imageInfo.textContent = "Error loading image";
+      };
+
+      closeSidebar();
+      return;
+    }
+
+    // 3. VIDEO PREVIEW
+    if (isVideo(item.name)) {
+      viewer.classList.remove("hidden");
+      mediaViewer.classList.remove("hidden");
+      videoViewerContainer.classList.remove("hidden");
+      imageViewerContainer.classList.add("hidden");
+      audioViewerContainer.classList.add("hidden");
+      viewerLoading.classList.add("loaded");
+
+      mediaVideo.src = item.download_url;
+      mediaVideo.play().catch(() => {});
+      closeSidebar();
+      return;
+    }
+
+    // 4. AUDIO PREVIEW
+    if (isAudio(item.name)) {
+      viewer.classList.remove("hidden");
+      mediaViewer.classList.remove("hidden");
+      audioViewerContainer.classList.remove("hidden");
+      imageViewerContainer.classList.add("hidden");
+      videoViewerContainer.classList.add("hidden");
+      viewerLoading.classList.add("loaded");
+
+      audioTitle.textContent = item.name;
+      audioSub.textContent = `Audio lecture file • ${formatSize(item.size)}`;
+      mediaAudio.src = item.download_url;
+      mediaAudio.play().catch(() => {});
+      closeSidebar();
+      return;
+    }
+
+    // 5. IN-BROWSER CODE & TEXT VIEWER
+    if (isCodeOrText(item.name)) {
+      viewer.classList.remove("hidden");
       codeViewer.classList.remove("hidden");
       viewerLoading.classList.remove("loaded");
 
@@ -712,7 +1301,7 @@
         const res = await fetch(item.download_url);
         if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch file content.`);
         const text = await res.text();
-        currentRawCode = text;
+        currentRawText = text;
 
         const lines = text.split(/\r\n|\r|\n/);
         const lineCount = lines.length;
@@ -733,43 +1322,205 @@
       } finally {
         viewerLoading.classList.add("loaded");
       }
-    } else {
-      // PDF & PPTX EMBEDDED VIEWER
-      codeViewer.classList.add("hidden");
+      closeSidebar();
+      return;
+    }
+
+    // 6. DOCUMENTS (PDF, PPT, PPTX, DOC, DOCX, XLS, XLSX)
+    if (isDocument(item.name)) {
+      viewer.classList.remove("hidden");
       viewerFrame.classList.remove("hidden");
       viewerLoading.classList.remove("loaded");
+      viewerFallback.classList.remove("hidden");
 
       let viewerUrl = "";
       if (ext === "pdf") {
+        currentDocEngine = "google";
         viewerUrl = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
-      } else if (["ppt", "pptx"].includes(ext)) {
-        viewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodedUrl}`;
-      }
-
-      viewer.classList.remove("hidden");
-      viewerFrame.src = viewerUrl;
-
-      viewerFrame.onload = () => {
-        viewerLoading.classList.add("loaded");
-      };
-
-      // Fallback bar
-      viewerFallback.classList.remove("hidden");
-      if (ext === "pdf") {
+        fallbackNotice.textContent = "PDF document viewer";
         fallbackLink.href = item.download_url;
         fallbackLink.textContent = "Open PDF Directly";
       } else {
+        currentDocEngine = "office";
+        viewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodedUrl}`;
+        fallbackNotice.textContent = "Microsoft Office document viewer";
         fallbackLink.href = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
-        fallbackLink.textContent = "Open in Google Docs Viewer";
+        fallbackLink.textContent = "Open in Google Docs";
       }
-      fallbackDownload.href = item.download_url || "#";
-    }
 
-    closeSidebar();
+      viewerFrame.src = viewerUrl;
+      viewerFrame.onload = () => {
+        viewerLoading.classList.add("loaded");
+      };
+      fallbackDownload.href = item.download_url || "#";
+      closeSidebar();
+    }
+  }
+
+  // ── Switch Document Viewer Engine ───────────────────────
+  if (fallbackEngineToggle) {
+    fallbackEngineToggle.addEventListener("click", () => {
+      if (!currentFile) return;
+      const encodedUrl = encodeURIComponent(currentFile.download_url);
+      const ext = getFileExt(currentFile.name);
+
+      viewerLoading.classList.remove("loaded");
+
+      if (currentDocEngine === "google") {
+        if (ext === "pdf") {
+          currentDocEngine = "native";
+          viewerFrame.src = currentFile.download_url;
+          fallbackNotice.textContent = "Native Browser PDF Viewer";
+        } else {
+          currentDocEngine = "office";
+          viewerFrame.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodedUrl}`;
+          fallbackNotice.textContent = "Office Live Viewer";
+        }
+      } else if (currentDocEngine === "office") {
+        currentDocEngine = "google";
+        viewerFrame.src = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
+        fallbackNotice.textContent = "Google Docs Viewer";
+      } else {
+        currentDocEngine = "google";
+        viewerFrame.src = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
+        fallbackNotice.textContent = "Google Docs Viewer";
+      }
+    });
+  }
+
+  // ── Image Zoom & Pan Handlers ───────────────────────────
+  function applyImageTransform() {
+    if (!mediaImage) return;
+    mediaImage.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomScale})`;
+    if (zoomLevel) zoomLevel.textContent = `${Math.round(zoomScale * 100)}%`;
+  }
+
+  function resetImageZoom() {
+    zoomScale = 1;
+    panX = 0;
+    panY = 0;
+    applyImageTransform();
+  }
+
+  if (zoomInBtn) {
+    zoomInBtn.addEventListener("click", () => {
+      zoomScale = Math.min(5, zoomScale + 0.25);
+      applyImageTransform();
+    });
+  }
+
+  if (zoomOutBtn) {
+    zoomOutBtn.addEventListener("click", () => {
+      zoomScale = Math.max(0.25, zoomScale - 0.25);
+      applyImageTransform();
+    });
+  }
+
+  if (zoomResetBtn) {
+    zoomResetBtn.addEventListener("click", () => {
+      resetImageZoom();
+    });
+  }
+
+  if (zoomFitBtn) {
+    zoomFitBtn.addEventListener("click", () => {
+      resetImageZoom();
+    });
+  }
+
+  if (imageStage) {
+    imageStage.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.15 : -0.15;
+      zoomScale = Math.max(0.2, Math.min(6, zoomScale + delta));
+      applyImageTransform();
+    }, { passive: false });
+
+    imageStage.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      isPanning = true;
+      startPanX = e.clientX - panX;
+      startPanY = e.clientY - panY;
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!isPanning) return;
+      panX = e.clientX - startPanX;
+      panY = e.clientY - startPanY;
+      applyImageTransform();
+    });
+
+    window.addEventListener("mouseup", () => {
+      isPanning = false;
+    });
+
+    imageStage.addEventListener("dblclick", () => {
+      resetImageZoom();
+    });
+  }
+
+  // ── Markdown Raw vs Rendered Toggle ─────────────────────
+  if (mdModeToggle) {
+    mdModeToggle.addEventListener("click", () => {
+      isMarkdownRaw = !isMarkdownRaw;
+      if (isMarkdownRaw) {
+        mdModeToggle.textContent = "📖 Rendered";
+        markdownBody.innerHTML = `<pre><code>${escapeHtml(currentRawText)}</code></pre>`;
+      } else {
+        mdModeToggle.textContent = "💻 Raw Code";
+        markdownBody.innerHTML = parseMarkdown(currentRawText);
+      }
+    });
+  }
+
+  if (copyMdBtn) {
+    copyMdBtn.addEventListener("click", () => {
+      if (!currentRawText) return;
+      copyToClipboard(currentRawText).then((ok) => {
+        if (ok) {
+          const orig = copyMdBtn.textContent;
+          copyMdBtn.textContent = "✓ Copied!";
+          showToast("Notes copied to clipboard!");
+          setTimeout(() => { copyMdBtn.textContent = orig; }, 2000);
+        } else {
+          showToast("Failed to copy notes.");
+        }
+      });
+    });
+  }
+
+  // ── Code Wrap Toggle ────────────────────────────────────
+  if (codeWrapToggle) {
+    codeWrapToggle.addEventListener("click", () => {
+      isCodeWrapped = !isCodeWrapped;
+      codeScrollArea.classList.toggle("wrap-enabled", isCodeWrapped);
+      codeWrapToggle.textContent = isCodeWrapped ? "Wrap: On" : "Wrap: Off";
+    });
+  }
+
+  // ── Copy Code button ───────────────────────────────────
+  if (copyCodeBtn) {
+    copyCodeBtn.addEventListener("click", () => {
+      if (!currentRawText) return;
+      copyToClipboard(currentRawText).then((ok) => {
+        if (ok) {
+          const original = copyCodeBtn.textContent;
+          copyCodeBtn.textContent = "✓ Copied!";
+          showToast("Code copied to clipboard!");
+          setTimeout(() => { copyCodeBtn.textContent = original; }, 2000);
+        } else {
+          showToast("Could not copy code to clipboard.");
+        }
+      });
+    });
   }
 
   // ── Back button ────────────────────────────────────────
   backBtn.addEventListener("click", () => {
+    // Stop video/audio if playing
+    if (mediaVideo) { mediaVideo.pause(); mediaVideo.src = ""; }
+    if (mediaAudio) { mediaAudio.pause(); mediaAudio.src = ""; }
+
     if (currentFile) {
       currentFile = null;
       navigateTo(currentPath, true);
@@ -780,37 +1531,28 @@
     }
   });
 
-  // ── Share button ───────────────────────────────────────
-  if (shareBtn) {
-    shareBtn.addEventListener("click", () => {
-      const shareUrl = window.location.href;
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(shareUrl).then(() => {
-          showToast("Shareable link copied to clipboard! 🔗");
-        }).catch(() => {
-          prompt("Copy this shareable link:", shareUrl);
-        });
+  // ── Share button (Toolbar & Topbar) ────────────────────
+  function handleShare(btnElement) {
+    const shareUrl = window.location.href;
+    copyToClipboard(shareUrl).then((ok) => {
+      if (ok) {
+        showToast("🔗 Link copied to clipboard!");
+        if (btnElement) {
+          const original = btnElement.textContent;
+          btnElement.textContent = "✓ Copied!";
+          setTimeout(() => { btnElement.textContent = original; }, 2000);
+        }
       } else {
         prompt("Copy this shareable link:", shareUrl);
       }
     });
   }
 
-  // ── Copy Code button ───────────────────────────────────
-  if (copyCodeBtn) {
-    copyCodeBtn.addEventListener("click", () => {
-      if (!currentRawCode) return;
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(currentRawCode).then(() => {
-          const original = copyCodeBtn.textContent;
-          copyCodeBtn.textContent = "✓ Copied!";
-          showToast("Code copied to clipboard!");
-          setTimeout(() => { copyCodeBtn.textContent = original; }, 2000);
-        }).catch(() => {
-          showToast("Could not copy to clipboard.");
-        });
-      }
-    });
+  if (shareBtn) {
+    shareBtn.addEventListener("click", () => handleShare(shareBtn));
+  }
+  if (topbarShareBtn) {
+    topbarShareBtn.addEventListener("click", () => handleShare(topbarShareBtn));
   }
 
   // ── Fullscreen ─────────────────────────────────────────
@@ -841,7 +1583,6 @@
     treeItems.forEach((el) => {
       const name = el.dataset.name;
       if (!name) {
-        // ".." item – always show
         el.classList.toggle("hidden", query.length > 0);
         return;
       }
@@ -865,23 +1606,9 @@
   }
 
   retryBtn.addEventListener("click", () => {
-    // Clear cache for current path and retry
     sessionStorage.removeItem(`${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentPath}`);
     navigateTo(currentPath);
   });
-
-
-  // ── Toast Pill (Android-style) ─────────────────────────
-  let toastTimeout = null;
-  function showToast(msg, duration = 2000) {
-    if (!toast) return;
-    toast.textContent = msg;
-    toast.classList.remove("hidden");
-    if (toastTimeout) clearTimeout(toastTimeout);
-    toastTimeout = setTimeout(() => {
-      toast.classList.add("hidden");
-    }, duration);
-  }
 
   // ── Developer Mode (7 clicks on logo) ──────────────────
   let logoClicks = 0;
@@ -912,6 +1639,7 @@
       ? `https://github.com/${currentRepo.owner}/${currentRepo.name}`
       : (currentRepo.host ? `https://${currentRepo.host}/${currentRepo.owner}/${currentRepo.name}` : `${currentRepo.owner}/${currentRepo.name}`);
     devRepoInput.value = currentUrl;
+    renderRecentReposList();
     devOverlay.classList.remove("hidden");
     setTimeout(() => {
       devRepoInput.focus();
@@ -929,7 +1657,6 @@
     let str = (input || "").trim();
     if (!str) return null;
 
-    // Detect prefix shorthands
     let platformHint = null;
     if (/^(gl|gitlab):/i.test(str)) {
       platformHint = "gitlab";
@@ -945,7 +1672,6 @@
       str = str.replace(/^(gh|github):/i, "");
     }
 
-    // Auto-prepend https:// if looks like a domain
     if (!/^https?:\/\//i.test(str) && (str.includes(".com/") || str.includes(".org/") || str.includes(".io/") || str.includes(".net/"))) {
       str = "https://" + str;
     }
@@ -1009,7 +1735,6 @@
           return { platform: "bitbucket", host, owner, name, branch };
         }
 
-        // Self-hosted Gitea / GitLab
         if (pathSegments.length >= 2) {
           const owner = pathSegments[0];
           const name = pathSegments[1];
@@ -1021,7 +1746,6 @@
       }
     }
 
-    // Shorthand format: owner/repo
     const parts = str.replace(/^\/+|\/+$/g, "").replace(/\.git$/, "").split("/").filter(Boolean);
     if (parts.length >= 2) {
       const platform = platformHint || "github";
@@ -1034,6 +1758,15 @@
     return null;
   }
 
+  function loadCustomRepo(parsedRepo) {
+    currentRepo = parsedRepo;
+    saveRecentRepo(parsedRepo);
+    updateRepoUI();
+    const platInfo = PLATFORMS[parsedRepo.platform] || { icon: "📁" };
+    showToast(`Loaded ${platInfo.icon} ${parsedRepo.owner}/${parsedRepo.name}`);
+    navigateTo("");
+  }
+
   function applyCustomRepo() {
     const val = (devRepoInput.value || "").trim();
     if (!val) return;
@@ -1044,12 +1777,8 @@
       return;
     }
 
-    currentRepo = parsed;
-    updateRepoUI();
     closeDevModal();
-    const platInfo = PLATFORMS[parsed.platform] || { icon: "📁" };
-    showToast(`Loaded ${platInfo.icon} ${parsed.owner}/${parsed.name}`);
-    navigateTo("");
+    loadCustomRepo(parsed);
   }
 
   function resetToDefaultRepo() {
@@ -1081,7 +1810,6 @@
     });
   }
 
-  // Clickable platform chips in Developer Options
   if (devPlatformsGuide) {
     devPlatformsGuide.addEventListener("click", (e) => {
       const chip = e.target.closest(".platform-chip");
@@ -1142,16 +1870,17 @@
     const fileParam = params.get("file");
     const pathParam = params.get("path");
 
-    // 1. Repo deep link (e.g. ?repo=owner/repo or ?repo=https://gitlab.com/...)
+    // 1. Repo deep link
     if (repoParam) {
       const parsed = parseRepoUrl(repoParam);
       if (parsed) {
         currentRepo = parsed;
+        saveRecentRepo(parsed);
         updateRepoUI();
       }
     }
 
-    // 2. Direct file deep link (e.g. ?file=DMW/Unit1.pdf or ?repo=...&file=slides.pptx)
+    // 2. Direct file deep link
     if (fileParam) {
       const normFile = fileParam.replace(/^\/+|\/+$/g, "");
       const folderPath = normFile.includes("/") ? normFile.substring(0, normFile.lastIndexOf("/")) : "";
@@ -1182,7 +1911,7 @@
       }
     }
 
-    // 3. Path deep link (e.g. ?path=DMW)
+    // 3. Path deep link
     if (pathParam !== null) {
       navigateTo(pathParam, false);
       return;

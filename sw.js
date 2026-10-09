@@ -1,20 +1,21 @@
 /* =========================================================
    Service Worker – Study Portal PWA
-   Caches the app shell for offline access.
+   Caches the app shell for offline access with network-first
+   for instantaneous updates on deployment.
    ========================================================= */
 
-const CACHE_NAME = "studyportal-v2";
-const APP_SHELL = ["/", "/index.html", "/style.css", "/app.js", "/manifest.json"];
+const CACHE_NAME = "studyportal-v3";
+const APP_SHELL = ["/", "/index.html", "/style.css?v=3", "/app.js?v=3", "/manifest.json"];
 
 // Install – cache app shell
 self.addEventListener("install", (e) => {
   e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL).catch(() => {}))
   );
   self.skipWaiting();
 });
 
-// Activate – clean old caches
+// Activate – clean all old caches
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
@@ -24,7 +25,7 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
-// Fetch – network-first for API calls and HTML, cache-first for static assets
+// Fetch – network-first for pages and app logic, cache fallback
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
 
@@ -40,34 +41,16 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // HTML documents: network-first so new releases appear immediately
-  if (e.request.mode === "navigate" || url.pathname === "/" || url.pathname.endsWith(".html")) {
-    e.respondWith(
-      fetch(e.request)
-        .then((res) => {
-          if (res && res.status === 200) {
-            const clone = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
-          }
-          return res;
-        })
-        .catch(() => caches.match(e.request) || caches.match("/"))
-    );
-    return;
-  }
-
-  // Other assets (CSS, JS, icons): stale-while-revalidate
+  // Network-first strategy for app shell assets so new releases apply immediately
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const fetchPromise = fetch(e.request)
-        .then((res) => {
-          if (res && res.status === 200) {
-            caches.open(CACHE_NAME).then((cache) => cache.put(e.request, res));
-          }
-          return res;
-        })
-        .catch(() => {});
-      return cached || fetchPromise;
-    })
+    fetch(e.request)
+      .then((res) => {
+        if (res && res.status === 200) {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
+        }
+        return res;
+      })
+      .catch(() => caches.match(e.request) || caches.match("/"))
   );
 });

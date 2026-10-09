@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Study Portal</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=3" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -20,10 +20,10 @@
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div class="logo-group">
-        <h1 class="logo" id="logo">📚 Study Portal</h1>
+        <h1 class="logo" id="logo" title="Study Portal">📚 Study Portal</h1>
         <div class="repo-badge hidden" id="repoBadge"></div>
       </div>
-      <button class="sidebar-close" id="sidebarClose" aria-label="Close sidebar">✕</button>
+      <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close sidebar">✕</button>
     </div>
     <div class="search-wrapper">
       <span class="search-icon">🔍</span>
@@ -33,6 +33,7 @@
         class="search-input"
         placeholder="Filter files & folders…"
         autocomplete="off"
+        spellcheck="false"
       />
     </div>
     <nav class="file-tree" id="fileTree">
@@ -47,20 +48,48 @@
   <main class="main" id="main">
     <!-- Top bar -->
     <header class="topbar">
-      <button class="menu-btn" id="menuBtn" aria-label="Open sidebar">☰</button>
-      <nav class="breadcrumbs" id="breadcrumbs" aria-label="Breadcrumb">
-        <a href="#" class="crumb" data-path="">🏠 Root</a>
-      </nav>
+      <div class="topbar-left">
+        <button type="button" class="menu-btn" id="menuBtn" aria-label="Open sidebar">☰</button>
+        <nav class="breadcrumbs" id="breadcrumbs" aria-label="Breadcrumb">
+          <a href="#" class="crumb" data-path="">🏠 Root</a>
+        </nav>
+      </div>
+      <div class="topbar-right">
+        <!-- Quick Switcher trigger -->
+        <div class="repo-switcher-container">
+          <button type="button" class="repo-switcher-btn" id="repoSwitcherBtn" aria-expanded="false" title="Switch or view repositories">
+            <span class="switcher-icon" id="switcherIcon">🐙</span>
+            <span class="switcher-name" id="switcherName">TYBCA</span>
+            <span class="switcher-arrow">▾</span>
+          </button>
+          <div class="repo-switcher-dropdown hidden" id="repoSwitcherDropdown">
+            <div class="switcher-header">
+              <span>Switch Repository</span>
+            </div>
+            <div class="switcher-list" id="switcherList">
+              <!-- Dynamically populated -->
+            </div>
+            <div class="switcher-footer">
+              <button type="button" class="switcher-custom-btn" id="switcherCustomBtn">
+                <span>🔧</span> Custom Repo URL…
+              </button>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="topbar-btn" id="topbarShareBtn" title="Copy shareable link to current view">
+          🔗
+        </button>
+      </div>
     </header>
 
     <!-- Toolbar (visible when viewing a file) -->
     <div class="toolbar hidden" id="toolbar">
-      <button class="btn btn-back" id="backBtn">← Back</button>
+      <button type="button" class="btn btn-back" id="backBtn">← Back</button>
       <span class="toolbar-filename" id="toolbarFilename"></span>
       <div class="toolbar-actions">
-        <button class="btn btn-share" id="shareBtn" title="Copy shareable link">🔗 Share</button>
+        <button type="button" class="btn btn-share" id="shareBtn" title="Copy shareable link">🔗 Share</button>
         <a class="btn btn-download" id="downloadBtn" href="#" download>⬇ Download</a>
-        <button class="btn btn-fullscreen" id="fullscreenBtn">⛶ Full Screen</button>
+        <button type="button" class="btn btn-fullscreen" id="fullscreenBtn">⛶ Full Screen</button>
       </div>
     </div>
 
@@ -74,33 +103,110 @@
         </div>
       </div>
 
-      <!-- Document & Code viewer -->
+      <!-- Document & Media viewer -->
       <div class="viewer hidden" id="viewer">
         <div class="viewer-loading" id="viewerLoading">
           <div class="spinner"></div>
           <p>Loading document…</p>
           <p class="viewer-loading-note">📎 Large files may take a moment to render.</p>
         </div>
+
+        <!-- Office & PDF iframe viewer -->
         <iframe id="viewerFrame" title="Document Viewer" sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
 
         <!-- In-Browser Code & Text Viewer -->
         <div class="code-viewer hidden" id="codeViewer">
           <div class="code-viewer-bar">
+            <div class="code-window-dots">
+              <span class="dot dot-red"></span>
+              <span class="dot dot-yellow"></span>
+              <span class="dot dot-green"></span>
+            </div>
             <div class="code-meta">
               <span class="code-lang-badge" id="codeLangBadge">TEXT</span>
               <span class="code-stats" id="codeStats">0 lines</span>
             </div>
-            <button class="btn btn-copy" id="copyCodeBtn">📋 Copy Code</button>
+            <div class="code-viewer-actions">
+              <button type="button" class="btn btn-sm" id="codeWrapToggle" title="Toggle line wrap">Wrap: Off</button>
+              <button type="button" class="btn btn-copy" id="copyCodeBtn">📋 Copy Code</button>
+            </div>
           </div>
-          <div class="code-scroll-area">
+          <div class="code-scroll-area" id="codeScrollArea">
             <div class="code-lines" id="codeLines"></div>
           </div>
         </div>
 
+        <!-- Markdown Notes Viewer -->
+        <div class="markdown-viewer hidden" id="markdownViewer">
+          <div class="markdown-viewer-bar">
+            <div class="markdown-meta">
+              <span class="md-badge">📖 NOTES</span>
+              <span class="md-stats" id="mdReadingTime">1 min read</span>
+            </div>
+            <div class="markdown-actions">
+              <button type="button" class="btn btn-sm" id="mdModeToggle">💻 Raw Code</button>
+              <button type="button" class="btn btn-copy" id="copyMdBtn">📋 Copy Notes</button>
+            </div>
+          </div>
+          <div class="markdown-scroll-area">
+            <article class="markdown-body" id="markdownBody"></article>
+          </div>
+        </div>
+
+        <!-- Media Viewer (Images, Audio, Video) -->
+        <div class="media-viewer hidden" id="mediaViewer">
+          <!-- Image Viewer -->
+          <div class="image-viewer-container hidden" id="imageViewerContainer">
+            <div class="media-toolbar">
+              <div class="media-info" id="imageInfo">Image Preview</div>
+              <div class="media-controls">
+                <button type="button" class="media-btn" id="zoomOutBtn" title="Zoom Out">−</button>
+                <span class="zoom-level" id="zoomLevel">100%</span>
+                <button type="button" class="media-btn" id="zoomInBtn" title="Zoom In">+</button>
+                <button type="button" class="media-btn" id="zoomResetBtn" title="Actual Size (1:1)">1:1</button>
+                <button type="button" class="media-btn" id="zoomFitBtn" title="Fit to Screen">⛶ Fit</button>
+              </div>
+            </div>
+            <div class="image-stage" id="imageStage">
+              <img id="mediaImage" src="" alt="Preview" draggable="false" />
+            </div>
+          </div>
+
+          <!-- Video Viewer -->
+          <div class="video-viewer-container hidden" id="videoViewerContainer">
+            <div class="video-wrapper">
+              <video id="mediaVideo" controls playsinline preload="metadata">
+                Your browser does not support HTML5 video playback.
+              </video>
+            </div>
+          </div>
+
+          <!-- Audio Viewer -->
+          <div class="audio-viewer-container hidden" id="audioViewerContainer">
+            <div class="audio-card">
+              <div class="audio-visual">
+                <span class="audio-icon">🎵</span>
+                <div class="audio-soundwaves">
+                  <span></span><span></span><span></span><span></span><span></span>
+                </div>
+              </div>
+              <div class="audio-details">
+                <h3 class="audio-title" id="audioTitle">Lecture Audio</h3>
+                <p class="audio-sub" id="audioSub">Audio track</p>
+              </div>
+              <audio id="mediaAudio" controls preload="metadata"></audio>
+            </div>
+          </div>
+        </div>
+
+        <!-- Viewer Fallback bar -->
         <div class="viewer-fallback hidden" id="viewerFallback">
-          <p>Having trouble viewing this file?</p>
-          <a id="fallbackLink" class="btn btn-primary" href="#" target="_blank" rel="noopener">Open in Google Docs Viewer</a>
-          <a id="fallbackDownload" class="btn btn-download" href="#" download>⬇ Download Instead</a>
+          <p id="fallbackNotice">Having trouble viewing this file?</p>
+          <div class="fallback-actions">
+            <button type="button" id="fallbackEngineToggle" class="btn btn-sm">Switch Viewer</button>
+            <a id="fallbackLink" class="btn btn-sm btn-primary" href="#" target="_blank" rel="noopener">Open Directly</a>
+            <a id="fallbackDownload" class="btn btn-sm btn-download" href="#" download>⬇ Download</a>
+          </div>
         </div>
       </div>
 
@@ -109,7 +215,7 @@
         <div class="error-icon">⚠️</div>
         <h2>Oops! Something went wrong</h2>
         <p id="errorMessage">Unable to load content. Please try again later.</p>
-        <button class="btn btn-primary" id="retryBtn">🔄 Retry</button>
+        <button type="button" class="btn btn-primary" id="retryBtn">🔄 Retry</button>
       </div>
 
       <!-- Empty state -->
@@ -126,35 +232,54 @@
 
   <!-- Developer modal -->
   <div class="dev-overlay hidden" id="devOverlay">
-    <div class="dev-modal">
-      <button type="button" class="dev-close-btn" id="devClose" aria-label="Close modal">✕</button>
+    <div class="dev-modal" role="dialog" aria-modal="true" aria-labelledby="devModalTitle">
       <div class="dev-modal-header">
-        <h3>🔧 Developer Options</h3>
+        <div class="dev-modal-title" id="devModalTitle">
+          <span class="dev-icon">🔧</span>
+          <div>
+            <h3>Repository Switcher</h3>
+            <span class="dev-sub">Developer Mode</span>
+          </div>
+        </div>
+        <button type="button" class="dev-close-btn" id="devClose" aria-label="Close modal">✕</button>
       </div>
-      <label for="devRepoInput">Repository URL or shorthand</label>
-      <input
-        type="text"
-        id="devRepoInput"
-        class="dev-input"
-        placeholder="https://github.com/... or gitlab.com/..."
-        autocomplete="off"
-      />
-      <div class="dev-platforms-guide" id="devPlatformsGuide">
-        <button type="button" class="platform-chip" data-example="https://github.com/Satya-Siba-Nayak/TYBCA">🐙 GitHub</button>
-        <button type="button" class="platform-chip" data-example="https://gitlab.com/gitlab-org/gitlab-foss">🦊 GitLab</button>
-        <button type="button" class="platform-chip" data-example="https://codeberg.org/forgejo/forgejo">🏔️ Codeberg</button>
-        <button type="button" class="platform-chip" data-example="https://gitea.com/gitea/tea">☕ Gitea</button>
-        <button type="button" class="platform-chip" data-example="https://bitbucket.org/workspace/repo">🪣 Bitbucket</button>
+
+      <div class="dev-modal-body">
+        <label for="devRepoInput" class="dev-label">Repository URL or shorthand</label>
+        <div class="dev-input-group">
+          <input
+            type="text"
+            id="devRepoInput"
+            class="dev-input"
+            placeholder="https://github.com/... or gitlab.com/..."
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+
+        <div class="dev-platforms-guide" id="devPlatformsGuide">
+          <button type="button" class="platform-chip" data-example="https://github.com/Satya-Siba-Nayak/TYBCA">🐙 GitHub</button>
+          <button type="button" class="platform-chip" data-example="https://gitlab.com/gitlab-org/gitlab-foss">🦊 GitLab</button>
+          <button type="button" class="platform-chip" data-example="https://codeberg.org/forgejo/forgejo">🏔️ Codeberg</button>
+          <button type="button" class="platform-chip" data-example="https://gitea.com/gitea/tea">☕ Gitea</button>
+          <button type="button" class="platform-chip" data-example="https://bitbucket.org/workspace/repo">🪣 Bitbucket</button>
+        </div>
+        <p class="dev-hint">Supports full URLs or shorthands like <code>gl:owner/repo</code>, <code>cb:owner/repo</code>, <code>owner/repo</code>.</p>
+
+        <div class="dev-recent-section hidden" id="devRecentSection">
+          <label class="dev-label">Recently Visited Repositories</label>
+          <div class="dev-recent-list" id="devRecentList"></div>
+        </div>
       </div>
-      <p class="dev-hint">Supports full URLs or shorthands like <code>gl:owner/repo</code>, <code>cb:owner/repo</code>, <code>owner/repo</code>.</p>
+
       <div class="dev-actions">
-        <button type="button" class="btn" id="devReset">Reset Default</button>
-        <button type="button" class="btn" id="devCancel">Cancel</button>
+        <button type="button" class="btn btn-secondary" id="devReset">Reset Default</button>
+        <button type="button" class="btn btn-ghost" id="devCancel">Cancel</button>
         <button type="button" class="btn btn-primary" id="devApply">Load Repository</button>
       </div>
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
