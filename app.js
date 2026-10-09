@@ -6,16 +6,185 @@
 (() => {
   "use strict";
 
-  // ── Config ──────────────────────────────────────────────
-  let repoOwner = "Satya-Siba-Nayak";
-  let repoName = "TYBCA";
-  let apiBase = `https://api.github.com/repos/${repoOwner}/${repoName}/contents`;
+  // ── Multi-Platform Repository Config ────────────────────
+  const DEFAULT_REPO = {
+    platform: "github",
+    host: "github.com",
+    owner: "Satya-Siba-Nayak",
+    name: "TYBCA",
+    branch: "HEAD"
+  };
+
+  let currentRepo = { ...DEFAULT_REPO };
   const CACHE_PREFIX = "studyportal_cache_";
   const LAST_PATH_KEY = "studyportal_lastpath";
 
-  function rebuildApiBase() {
-    apiBase = `https://api.github.com/repos/${repoOwner}/${repoName}/contents`;
+  const PLATFORMS = {
+    github: { name: "GitHub", icon: "🐙", host: "github.com" },
+    gitlab: { name: "GitLab", icon: "🦊", host: "gitlab.com" },
+    codeberg: { name: "Codeberg", icon: "🏔️", host: "codeberg.org" },
+    gitea: { name: "Gitea", icon: "☕", host: "gitea.com" },
+    bitbucket: { name: "Bitbucket", icon: "🪣", host: "bitbucket.org" }
+  };
+
+  function isDefaultRepo() {
+    return (
+      currentRepo.platform === DEFAULT_REPO.platform &&
+      currentRepo.host === DEFAULT_REPO.host &&
+      currentRepo.owner === DEFAULT_REPO.owner &&
+      currentRepo.name === DEFAULT_REPO.name
+    );
   }
+
+  // ── Platform Adapters ───────────────────────────────────
+  const ADAPTERS = {
+    github: {
+      async fetchContents(repo, path) {
+        const encPath = path ? "/" + path.split("/").map(encodeURIComponent).join("/") : "";
+        const branchParam = repo.branch && repo.branch !== "HEAD" ? `?ref=${encodeURIComponent(repo.branch)}` : "";
+        const url = `https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/contents${encPath}${branchParam}`;
+        const res = await fetch(url);
+
+        const remaining = res.headers.get("X-RateLimit-Remaining");
+        if (remaining !== null && parseInt(remaining, 10) <= 5) {
+          showRateLimitBanner(remaining);
+        }
+
+        if (!res.ok) {
+          if (res.status === 403) {
+            throw new Error("GitHub API rate limit exceeded. Please wait a minute or try another repository.");
+          }
+          if (res.status === 404) {
+            throw new Error(`Repository or folder not found on GitHub (${repo.owner}/${repo.name}).`);
+          }
+          throw new Error(`GitHub returned ${res.status}: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        if (!Array.isArray(data)) return [];
+        return data.map((item) => ({
+          name: item.name,
+          path: item.path,
+          type: item.type === "dir" ? "dir" : "file",
+          size: item.size,
+          download_url: item.download_url
+        }));
+      }
+    },
+
+    gitlab: {
+      async fetchContents(repo, path) {
+        const host = repo.host || "gitlab.com";
+        const projectId = encodeURIComponent(`${repo.owner}/${repo.name}`);
+        const params = new URLSearchParams({ per_page: "100" });
+        if (path) params.set("path", path);
+        if (repo.branch && repo.branch !== "HEAD") params.set("ref", repo.branch);
+
+        const url = `https://${host}/api/v4/projects/${projectId}/repository/tree?${params.toString()}`;
+        const res = await fetch(url);
+
+        if (!res.ok) {
+          if (res.status === 404) {
+            throw new Error(`Repository or folder not found on GitLab (${repo.owner}/${repo.name}). Public repos only.`);
+          }
+          throw new Error(`GitLab returned ${res.status}: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        if (!Array.isArray(data)) return [];
+        const branch = repo.branch || "HEAD";
+        return data.map((item) => ({
+          name: item.name,
+          path: item.path,
+          type: item.type === "tree" ? "dir" : "file",
+          size: null,
+          download_url: `https://${host}/${repo.owner}/${repo.name}/-/raw/${branch}/${encodeURIComponent(item.path).replace(/%2F/g, "/")}`
+        }));
+      }
+    },
+
+    codeberg: {
+      async fetchContents(repo, path) {
+        const host = repo.host || "codeberg.org";
+        const encPath = path ? "/" + path.split("/").map(encodeURIComponent).join("/") : "";
+        const branchParam = repo.branch && repo.branch !== "HEAD" ? `?ref=${encodeURIComponent(repo.branch)}` : "";
+        const url = `https://${host}/api/v1/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/contents${encPath}${branchParam}`;
+        const res = await fetch(url);
+
+        if (!res.ok) {
+          if (res.status === 404) {
+            throw new Error(`Repository or folder not found on Codeberg (${repo.owner}/${repo.name}).`);
+          }
+          throw new Error(`Codeberg returned ${res.status}: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        if (!Array.isArray(data)) return [];
+        const branch = repo.branch || "HEAD";
+        return data.map((item) => ({
+          name: item.name,
+          path: item.path,
+          type: item.type === "dir" ? "dir" : "file",
+          size: item.size,
+          download_url: item.download_url || `https://${host}/${repo.owner}/${repo.name}/raw/branch/${branch}/${encodeURIComponent(item.path).replace(/%2F/g, "/")}`
+        }));
+      }
+    },
+
+    gitea: {
+      async fetchContents(repo, path) {
+        const host = repo.host || "gitea.com";
+        const encPath = path ? "/" + path.split("/").map(encodeURIComponent).join("/") : "";
+        const branchParam = repo.branch && repo.branch !== "HEAD" ? `?ref=${encodeURIComponent(repo.branch)}` : "";
+        const url = `https://${host}/api/v1/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/contents${encPath}${branchParam}`;
+        const res = await fetch(url);
+
+        if (!res.ok) {
+          if (res.status === 404) {
+            throw new Error(`Repository or folder not found on Gitea (${repo.owner}/${repo.name}).`);
+          }
+          throw new Error(`Gitea returned ${res.status}: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        if (!Array.isArray(data)) return [];
+        const branch = repo.branch || "HEAD";
+        return data.map((item) => ({
+          name: item.name,
+          path: item.path,
+          type: item.type === "dir" ? "dir" : "file",
+          size: item.size,
+          download_url: item.download_url || `https://${host}/${repo.owner}/${repo.name}/raw/branch/${branch}/${encodeURIComponent(item.path).replace(/%2F/g, "/")}`
+        }));
+      }
+    },
+
+    bitbucket: {
+      async fetchContents(repo, path) {
+        const branch = repo.branch || "HEAD";
+        const encPath = path ? encodeURIComponent(path).replace(/%2F/g, "/") : "";
+        const url = `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/src/${branch}/${encPath}?pagelen=100`;
+        const res = await fetch(url);
+
+        if (!res.ok) {
+          if (res.status === 404) {
+            throw new Error(`Repository or folder not found on Bitbucket (${repo.owner}/${repo.name}).`);
+          }
+          throw new Error(`Bitbucket returned ${res.status}: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        const entries = data.values || [];
+        return entries.map((item) => ({
+          name: item.path.split("/").pop(),
+          path: item.path,
+          type: item.type === "commit_directory" ? "dir" : "file",
+          size: item.size || null,
+          download_url: `https://bitbucket.org/${repo.owner}/${repo.name}/raw/${branch}/${encodeURIComponent(item.path).replace(/%2F/g, "/")}`
+        }));
+      }
+    }
+  };
 
   // ── DOM refs ────────────────────────────────────────────
   const sidebar = document.getElementById("sidebar");
@@ -44,11 +213,14 @@
   const retryBtn = document.getElementById("retryBtn");
   const emptyState = document.getElementById("emptyState");
   const logo = document.getElementById("logo");
+  const repoBadge = document.getElementById("repoBadge");
   const toast = document.getElementById("toast");
   const devOverlay = document.getElementById("devOverlay");
   const devRepoInput = document.getElementById("devRepoInput");
   const devCancel = document.getElementById("devCancel");
   const devApply = document.getElementById("devApply");
+  const devReset = document.getElementById("devReset");
+  const devClose = document.getElementById("devClose");
 
   // ── State ───────────────────────────────────────────────
   let currentPath = "";
@@ -103,7 +275,7 @@
 
   // ── API fetch with caching ─────────────────────────────
   async function fetchContents(path = "") {
-    const cacheKey = `${CACHE_PREFIX}${repoOwner}_${repoName}_${path}`;
+    const cacheKey = `${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${path}`;
     const cached = sessionStorage.getItem(cacheKey);
     if (cached) {
       try {
@@ -113,30 +285,19 @@
       }
     }
 
-    const url = path ? `${apiBase}/${path}` : apiBase;
-    const res = await fetch(url);
+    const adapter = ADAPTERS[currentRepo.platform] || ADAPTERS.github;
+    const items = await adapter.fetchContents(currentRepo, path);
 
-    // Rate-limit check
-    const remaining = res.headers.get("X-RateLimit-Remaining");
-    if (remaining !== null && parseInt(remaining, 10) <= 5) {
-      showRateLimitBanner(remaining);
-    }
+    // Filter out dotfiles (e.g. .gitignore)
+    const cleaned = (items || []).filter((item) => !item.name.startsWith("."));
 
-    if (!res.ok) {
-      if (res.status === 403) {
-        throw new Error(
-          "GitHub API rate limit exceeded. Please wait a minute and try again, or open the repository directly on GitHub."
-        );
-      }
-      throw new Error(`GitHub API returned ${res.status}: ${res.statusText}`);
+    // Cache the directory listings
+    if (Array.isArray(cleaned)) {
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify(cleaned));
+      } catch { /* storage full */ }
     }
-
-    const data = await res.json();
-    // Only cache directory listings (arrays)
-    if (Array.isArray(data)) {
-      sessionStorage.setItem(cacheKey, JSON.stringify(data));
-    }
-    return data;
+    return cleaned;
   }
 
   // ── Rate-limit banner ──────────────────────────────────
@@ -146,7 +307,7 @@
     banner.id = "rateBanner";
     banner.className = "rate-limit-banner";
     banner.innerHTML = `
-      <span>⚠️ GitHub API rate limit is low (${remaining} requests remaining). Cached data will be used where possible.</span>
+      <span>⚠️ API rate limit is low (${remaining} requests remaining). Cached data will be used where possible.</span>
       <button aria-label="Dismiss">✕</button>
     `;
     banner.querySelector("button").addEventListener("click", () => banner.remove());
@@ -159,7 +320,7 @@
     currentFile = null;
 
     // Persist last visited path for session restore (default repo only)
-    if (repoOwner === "Satya-Siba-Nayak" && repoName === "TYBCA") {
+    if (isDefaultRepo()) {
       try { localStorage.setItem(LAST_PATH_KEY, path); } catch { /* quota */ }
     }
 
@@ -302,7 +463,8 @@
     const rootCrumb = document.createElement("a");
     rootCrumb.className = "crumb";
     rootCrumb.href = "#";
-    rootCrumb.textContent = "🏠 Root";
+    const platIcon = PLATFORMS[currentRepo.platform]?.icon || "";
+    rootCrumb.textContent = isDefaultRepo() ? "🏠 Root" : `🏠 ${platIcon} ${currentRepo.name}`;
     rootCrumb.dataset.path = "";
     rootCrumb.addEventListener("click", (e) => {
       e.preventDefault();
@@ -474,7 +636,7 @@
 
   retryBtn.addEventListener("click", () => {
     // Clear cache for current path and retry
-    sessionStorage.removeItem(`${CACHE_PREFIX}${repoOwner}_${repoName}_${currentPath}`);
+    sessionStorage.removeItem(`${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentPath}`);
     navigateTo(currentPath);
   });
 
@@ -522,7 +684,10 @@
 
   function openDevModal() {
     if (!devOverlay) return;
-    devRepoInput.value = `https://github.com/${repoOwner}/${repoName}`;
+    const currentUrl = isDefaultRepo()
+      ? `https://github.com/${currentRepo.owner}/${currentRepo.name}`
+      : (currentRepo.host ? `https://${currentRepo.host}/${currentRepo.owner}/${currentRepo.name}` : `${currentRepo.owner}/${currentRepo.name}`);
+    devRepoInput.value = currentUrl;
     devOverlay.classList.remove("hidden");
     setTimeout(() => {
       devRepoInput.focus();
@@ -535,42 +700,152 @@
     devOverlay.classList.add("hidden");
   }
 
+  // ── Smart Multi-Platform URL / Shorthand Parser ────────
+  function parseRepoUrl(input) {
+    let str = (input || "").trim();
+    if (!str) return null;
+
+    // Detect prefix shorthands
+    let platformHint = null;
+    if (/^(gl|gitlab):/i.test(str)) {
+      platformHint = "gitlab";
+      str = str.replace(/^(gl|gitlab):/i, "");
+    } else if (/^(cb|codeberg):/i.test(str)) {
+      platformHint = "codeberg";
+      str = str.replace(/^(cb|codeberg):/i, "");
+    } else if (/^(bb|bitbucket):/i.test(str)) {
+      platformHint = "bitbucket";
+      str = str.replace(/^(bb|bitbucket):/i, "");
+    } else if (/^(gh|github):/i.test(str)) {
+      platformHint = "github";
+      str = str.replace(/^(gh|github):/i, "");
+    }
+
+    // Auto-prepend https:// if looks like a domain
+    if (!/^https?:\/\//i.test(str) && (str.includes(".com/") || str.includes(".org/") || str.includes(".io/") || str.includes(".net/"))) {
+      str = "https://" + str;
+    }
+
+    if (/^https?:\/\//i.test(str)) {
+      try {
+        const url = new URL(str);
+        const host = url.hostname.toLowerCase();
+        let pathSegments = url.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+        if (pathSegments.length > 0 && pathSegments[pathSegments.length - 1].endsWith(".git")) {
+          pathSegments[pathSegments.length - 1] = pathSegments[pathSegments.length - 1].replace(/\.git$/, "");
+        }
+
+        if (host === "github.com") {
+          if (pathSegments.length < 2) return null;
+          const owner = pathSegments[0];
+          const name = pathSegments[1];
+          let branch = "HEAD";
+          if (pathSegments[2] === "tree" && pathSegments[3]) {
+            branch = pathSegments[3];
+          }
+          return { platform: "github", host, owner, name, branch };
+        }
+
+        if (host === "gitlab.com") {
+          if (pathSegments.length < 2) return null;
+          const dashIdx = pathSegments.indexOf("-");
+          let branch = "HEAD";
+          let projectSegments = pathSegments;
+          if (dashIdx !== -1) {
+            projectSegments = pathSegments.slice(0, dashIdx);
+            if (pathSegments[dashIdx + 1] === "tree" && pathSegments[dashIdx + 2]) {
+              branch = pathSegments[dashIdx + 2];
+            }
+          }
+          if (projectSegments.length < 2) return null;
+          const name = projectSegments[projectSegments.length - 1];
+          const owner = projectSegments.slice(0, -1).join("/");
+          return { platform: "gitlab", host, owner, name, branch };
+        }
+
+        if (host === "codeberg.org") {
+          if (pathSegments.length < 2) return null;
+          const owner = pathSegments[0];
+          const name = pathSegments[1];
+          let branch = "HEAD";
+          if (pathSegments[2] === "src" && pathSegments[3] === "branch" && pathSegments[4]) {
+            branch = pathSegments[4];
+          }
+          return { platform: "codeberg", host, owner, name, branch };
+        }
+
+        if (host === "bitbucket.org") {
+          if (pathSegments.length < 2) return null;
+          const owner = pathSegments[0];
+          const name = pathSegments[1];
+          let branch = "HEAD";
+          if (pathSegments[2] === "src" && pathSegments[3]) {
+            branch = pathSegments[3];
+          }
+          return { platform: "bitbucket", host, owner, name, branch };
+        }
+
+        // Self-hosted Gitea / GitLab
+        if (pathSegments.length >= 2) {
+          const owner = pathSegments[0];
+          const name = pathSegments[1];
+          const platform = platformHint || (host.includes("gitlab") ? "gitlab" : "gitea");
+          return { platform, host, owner, name, branch: "HEAD" };
+        }
+      } catch {
+        return null;
+      }
+    }
+
+    // Shorthand format: owner/repo
+    const parts = str.replace(/^\/+|\/+$/g, "").replace(/\.git$/, "").split("/").filter(Boolean);
+    if (parts.length >= 2) {
+      const platform = platformHint || "github";
+      const host = platform === "gitlab" ? "gitlab.com" : platform === "codeberg" ? "codeberg.org" : platform === "bitbucket" ? "bitbucket.org" : "github.com";
+      const name = parts[parts.length - 1];
+      const owner = parts.slice(0, -1).join("/");
+      return { platform, host, owner, name, branch: "HEAD" };
+    }
+
+    return null;
+  }
+
+  function applyCustomRepo() {
+    const val = (devRepoInput.value || "").trim();
+    if (!val) return;
+
+    const parsed = parseRepoUrl(val);
+    if (!parsed) {
+      showToast("Invalid format. Enter a GitHub/GitLab/Codeberg URL or owner/repo.");
+      return;
+    }
+
+    currentRepo = parsed;
+    updateRepoUI();
+    closeDevModal();
+    const platInfo = PLATFORMS[parsed.platform] || { icon: "📁" };
+    showToast(`Loaded ${platInfo.icon} ${parsed.owner}/${parsed.name}`);
+    navigateTo("");
+  }
+
+  function resetToDefaultRepo() {
+    currentRepo = { ...DEFAULT_REPO };
+    updateRepoUI();
+    closeDevModal();
+    showToast("Reset to default repository (TYBCA)");
+    navigateTo("");
+  }
+
+  if (devApply) devApply.addEventListener("click", applyCustomRepo);
+  if (devReset) devReset.addEventListener("click", resetToDefaultRepo);
   if (devCancel) devCancel.addEventListener("click", closeDevModal);
+  if (devClose) devClose.addEventListener("click", closeDevModal);
   if (devOverlay) {
     devOverlay.addEventListener("click", (e) => {
       if (e.target === devOverlay) closeDevModal();
     });
   }
 
-  function applyCustomRepo() {
-    let val = (devRepoInput.value || "").trim();
-    if (!val) return;
-
-    // Normalize input (support URLs or owner/repo format)
-    val = val.replace(/^https?:\/\//i, "");
-    val = val.replace(/^github\.com\//i, "");
-    val = val.replace(/\.git$/i, "");
-    val = val.replace(/\/+$/, "");
-
-    const parts = val.split("/").filter(Boolean);
-    if (parts.length < 2) {
-      showToast("Invalid format. Use: owner/repo");
-      return;
-    }
-
-    const newOwner = parts[0];
-    const newRepo = parts[1];
-
-    repoOwner = newOwner;
-    repoName = newRepo;
-    rebuildApiBase();
-
-    closeDevModal();
-    showToast(`Loaded ${newOwner}/${newRepo}`);
-    navigateTo("");
-  }
-
-  if (devApply) devApply.addEventListener("click", applyCustomRepo);
   if (devRepoInput) {
     devRepoInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
@@ -584,6 +859,7 @@
 
   // ── Boot ────────────────────────────────────────────────
   function boot() {
+    updateRepoUI();
     let startPath = "";
     try {
       const saved = localStorage.getItem(LAST_PATH_KEY);

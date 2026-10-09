@@ -1,6 +1,6 @@
 # 📚 Git Notes Viewer
 
-A study resource portal to browse and view files from a GitHub repository — built with pure HTML, CSS, and JavaScript.
+A study resource portal to browse and view files from Git repositories — built with pure HTML, CSS, and JavaScript.
 
 ## Live
 
@@ -9,7 +9,8 @@ A study resource portal to browse and view files from a GitHub repository — bu
 
 ## Features
 
-- Browse GitHub repo folders & files in real-time
+- Multi-platform Git support (GitHub, GitLab, Codeberg, Gitea, Bitbucket)
+- Browse repo folders & files in real-time
 - Inline PDF & PowerPoint viewer
 - Search/filter files, breadcrumb navigation
 - Session memory — resumes last visited folder
@@ -21,7 +22,7 @@ A study resource portal to browse and view files from a GitHub repository — bu
 ```
 index.html    – markup
 style.css     – styling
-app.js        – logic & GitHub API
+app.js        – logic & Git platform adapters
 sw.js         – service worker
 manifest.json – PWA config
 icons/        – app icons

@@ -19,7 +19,10 @@
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <h1 class="logo" id="logo">📚 Study Portal</h1>
+      <div class="logo-group">
+        <h1 class="logo" id="logo">📚 Study Portal</h1>
+        <div class="repo-badge hidden" id="repoBadge"></div>
+      </div>
       <button class="sidebar-close" id="sidebarClose" aria-label="Close sidebar">✕</button>
     </div>
     <div class="search-wrapper">
@@ -108,19 +111,30 @@
   <!-- Developer modal -->
   <div class="dev-overlay hidden" id="devOverlay">
     <div class="dev-modal">
-      <h3>🔧 Developer Options</h3>
-      <label for="devRepoInput">GitHub Repository URL</label>
+      <div class="dev-modal-header">
+        <h3>🔧 Developer Options</h3>
+        <button class="dev-close-btn" id="devClose" aria-label="Close modal">✕</button>
+      </div>
+      <label for="devRepoInput">Repository URL or shorthand</label>
       <input
         type="text"
         id="devRepoInput"
         class="dev-input"
-        placeholder="https://github.com/owner/repo"
+        placeholder="https://github.com/... or gitlab.com/..."
         autocomplete="off"
       />
-      <p class="dev-hint">e.g. https://github.com/octocat/Hello-World</p>
+      <div class="dev-platforms-guide">
+        <span class="platform-chip">🐙 GitHub</span>
+        <span class="platform-chip">🦊 GitLab</span>
+        <span class="platform-chip">🏔️ Codeberg</span>
+        <span class="platform-chip">☕ Gitea</span>
+        <span class="platform-chip">🪣 Bitbucket</span>
+      </div>
+      <p class="dev-hint">Supports full URLs or shorthands like <code>gl:owner/repo</code>, <code>cb:owner/repo</code>, <code>owner/repo</code>.</p>
       <div class="dev-actions">
+        <button class="btn" id="devReset">Reset Default</button>
         <button class="btn" id="devCancel">Cancel</button>
-        <button class="btn btn-primary" id="devApply">Apply</button>
+        <button class="btn btn-primary" id="devApply">Load Repository</button>
       </div>
     </div>
   </div>
