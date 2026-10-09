@@ -12,6 +12,8 @@ A study resource portal to browse and view files from Git repositories — built
 - Multi-platform Git support (GitHub, GitLab, Codeberg, Gitea, Bitbucket)
 - Browse repo folders & files in real-time
 - Inline PDF & PowerPoint viewer
+- In-browser code & text viewer with syntax highlighting & line numbers
+- Deep linking & shareable direct links (`?file=...`, `?repo=...&file=...`)
 - Search/filter files, breadcrumb navigation
 - Session memory — resumes last visited folder
 - Dark mode, fully responsive, mobile drawer

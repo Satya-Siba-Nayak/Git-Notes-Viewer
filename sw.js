@@ -3,7 +3,7 @@
    Caches the app shell for offline access.
    ========================================================= */
 
-const CACHE_NAME = "studyportal-v1";
+const CACHE_NAME = "studyportal-v2";
 const APP_SHELL = ["/", "/index.html", "/style.css", "/app.js", "/manifest.json"];
 
 // Install – cache app shell
@@ -24,30 +24,50 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
-// Fetch – network-first for API calls, cache-first for app shell
+// Fetch – network-first for API calls and HTML, cache-first for static assets
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
 
-  // GitHub API: always network, never cache in SW (app uses sessionStorage)
-  if (url.hostname === "api.github.com") {
+  // External Git APIs & raw content: always network
+  if (
+    url.hostname.includes("github.com") ||
+    url.hostname.includes("githubusercontent.com") ||
+    url.hostname.includes("gitlab.com") ||
+    url.hostname.includes("codeberg.org") ||
+    url.hostname.includes("bitbucket.org") ||
+    url.pathname.includes("/api/")
+  ) {
     return;
   }
 
-  // App shell & static assets: cache-first
+  // HTML documents: network-first so new releases appear immediately
+  if (e.request.mode === "navigate" || url.pathname === "/" || url.pathname.endsWith(".html")) {
+    e.respondWith(
+      fetch(e.request)
+        .then((res) => {
+          if (res && res.status === 200) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
+          }
+          return res;
+        })
+        .catch(() => caches.match(e.request) || caches.match("/"))
+    );
+    return;
+  }
+
+  // Other assets (CSS, JS, icons): stale-while-revalidate
   e.respondWith(
     caches.match(e.request).then((cached) => {
-      if (cached) {
-        // Return cache, refresh in background
-        fetch(e.request)
-          .then((res) => {
-            if (res && res.status === 200) {
-              caches.open(CACHE_NAME).then((cache) => cache.put(e.request, res));
-            }
-          })
-          .catch(() => {});
-        return cached;
-      }
-      return fetch(e.request);
+      const fetchPromise = fetch(e.request)
+        .then((res) => {
+          if (res && res.status === 200) {
+            caches.open(CACHE_NAME).then((cache) => cache.put(e.request, res));
+          }
+          return res;
+        })
+        .catch(() => {});
+      return cached || fetchPromise;
     })
   );
 });

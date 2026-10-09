@@ -200,11 +200,17 @@
   const backBtn = document.getElementById("backBtn");
   const downloadBtn = document.getElementById("downloadBtn");
   const fullscreenBtn = document.getElementById("fullscreenBtn");
+  const shareBtn = document.getElementById("shareBtn");
   const fileGrid = document.getElementById("fileGrid");
   const contentLoader = document.getElementById("contentLoader");
   const viewer = document.getElementById("viewer");
   const viewerLoading = document.getElementById("viewerLoading");
   const viewerFrame = document.getElementById("viewerFrame");
+  const codeViewer = document.getElementById("codeViewer");
+  const codeLangBadge = document.getElementById("codeLangBadge");
+  const codeStats = document.getElementById("codeStats");
+  const copyCodeBtn = document.getElementById("copyCodeBtn");
+  const codeLines = document.getElementById("codeLines");
   const viewerFallback = document.getElementById("viewerFallback");
   const fallbackLink = document.getElementById("fallbackLink");
   const fallbackDownload = document.getElementById("fallbackDownload");
@@ -217,6 +223,7 @@
   const toast = document.getElementById("toast");
   const devOverlay = document.getElementById("devOverlay");
   const devRepoInput = document.getElementById("devRepoInput");
+  const devPlatformsGuide = document.getElementById("devPlatformsGuide");
   const devCancel = document.getElementById("devCancel");
   const devApply = document.getElementById("devApply");
   const devReset = document.getElementById("devReset");
@@ -226,11 +233,53 @@
   let currentPath = "";
   let currentItems = [];
   let currentFile = null; // { name, download_url, html_url, ... }
+  let currentRawCode = "";
+
+  // ── Code Extensions & Languages ─────────────────────────
+  const CODE_EXT_MAP = {
+    js: "JavaScript", mjs: "JavaScript", cjs: "JavaScript", jsx: "React JSX",
+    ts: "TypeScript", tsx: "React TSX",
+    py: "Python", pyw: "Python",
+    java: "Java",
+    c: "C", h: "C Header", cpp: "C++", cc: "C++", cxx: "C++", hpp: "C++ Header",
+    cs: "C#",
+    go: "Go",
+    rs: "Rust",
+    php: "PHP",
+    rb: "Ruby",
+    sql: "SQL",
+    html: "HTML", htm: "HTML",
+    css: "CSS", scss: "SCSS", sass: "Sass", less: "Less",
+    json: "JSON",
+    xml: "XML", svg: "SVG",
+    yaml: "YAML", yml: "YAML",
+    toml: "TOML", ini: "INI", env: "ENV",
+    md: "Markdown", markdown: "Markdown",
+    txt: "Plain Text", log: "Log",
+    sh: "Shell", bash: "Bash", zsh: "Zsh", bat: "Batch", ps1: "PowerShell",
+    dockerfile: "Dockerfile", makefile: "Makefile"
+  };
 
   // ── Helpers ─────────────────────────────────────────────
+  function getFileExt(name) {
+    return (name.split(".").pop() || "").toLowerCase();
+  }
+
+  function isCodeOrText(name) {
+    const ext = getFileExt(name);
+    if (ext in CODE_EXT_MAP) return true;
+    const lower = name.toLowerCase();
+    return ["dockerfile", "makefile", "license", "readme", ".gitignore", ".env"].includes(lower);
+  }
+
+  function isViewable(name) {
+    const ext = getFileExt(name);
+    return ["pdf", "ppt", "pptx"].includes(ext) || isCodeOrText(name);
+  }
+
   function getIcon(item) {
     if (item.type === "dir") return "📁";
-    const ext = (item.name.split(".").pop() || "").toLowerCase();
+    const ext = getFileExt(item.name);
     if (ext === "pdf") return "📄";
     if (["ppt", "pptx"].includes(ext)) return "📊";
     if (["doc", "docx"].includes(ext)) return "📝";
@@ -238,8 +287,8 @@
     if (["jpg", "jpeg", "png", "gif", "svg", "webp"].includes(ext)) return "🖼️";
     if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "📦";
     if (["mp4", "mkv", "avi", "mov"].includes(ext)) return "🎬";
-    if (["py", "js", "html", "css", "java", "c", "cpp", "cs"].includes(ext)) return "💻";
-    if (["txt", "md", "log"].includes(ext)) return "📝";
+    if (["py", "js", "ts", "html", "css", "java", "c", "cpp", "cs", "sql", "sh", "rs", "go"].includes(ext)) return "💻";
+    if (["txt", "md", "log", "json", "yaml", "yml"].includes(ext)) return "📝";
     return "📄";
   }
 
@@ -248,15 +297,6 @@
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
     return (bytes / 1048576).toFixed(1) + " MB";
-  }
-
-  function isViewable(name) {
-    const ext = (name.split(".").pop() || "").toLowerCase();
-    return ["pdf", "ppt", "pptx"].includes(ext);
-  }
-
-  function getFileExt(name) {
-    return (name.split(".").pop() || "").toLowerCase();
   }
 
   // ── Sidebar toggle (mobile) ────────────────────────────
@@ -314,10 +354,49 @@
     document.getElementById("main").prepend(banner);
   }
 
+  // ── URL & Deep Linking ──────────────────────────────────
+  function updateUrl({ path, file } = {}, replace = false) {
+    const url = new URL(window.location.origin + window.location.pathname);
+
+    // Repo param
+    if (!isDefaultRepo()) {
+      if (currentRepo.platform === "github" && currentRepo.host === "github.com") {
+        url.searchParams.set("repo", `${currentRepo.owner}/${currentRepo.name}`);
+      } else if (currentRepo.host === "gitlab.com") {
+        url.searchParams.set("repo", `gl:${currentRepo.owner}/${currentRepo.name}`);
+      } else if (currentRepo.host === "codeberg.org") {
+        url.searchParams.set("repo", `cb:${currentRepo.owner}/${currentRepo.name}`);
+      } else if (currentRepo.host === "bitbucket.org") {
+        url.searchParams.set("repo", `bb:${currentRepo.owner}/${currentRepo.name}`);
+      } else {
+        url.searchParams.set("repo", `https://${currentRepo.host}/${currentRepo.owner}/${currentRepo.name}`);
+      }
+    }
+
+    if (file) {
+      url.searchParams.set("file", file);
+    } else if (path) {
+      url.searchParams.set("path", path);
+    }
+
+    const newQuery = url.search ? url.search : window.location.pathname;
+    if (replace) {
+      history.replaceState({ repo: currentRepo, path, file }, "", newQuery);
+    } else {
+      if (window.location.search !== (url.search || "")) {
+        history.pushState({ repo: currentRepo, path, file }, "", newQuery);
+      }
+    }
+  }
+
   // ── Navigate to a directory ────────────────────────────
-  async function navigateTo(path) {
+  async function navigateTo(path, updateHistory = true) {
     currentPath = path;
     currentFile = null;
+
+    if (updateHistory) {
+      updateUrl({ path });
+    }
 
     // Persist last visited path for session restore (default repo only)
     if (isDefaultRepo()) {
@@ -336,13 +415,12 @@
     // Hide toolbar/viewer
     toolbar.classList.add("hidden");
     viewer.classList.add("hidden");
+    codeViewer.classList.add("hidden");
     viewerFallback.classList.add("hidden");
 
     try {
       const items = await fetchContents(path);
       currentItems = Array.isArray(items) ? items : [];
-      // Filter out dotfiles (e.g. .gitignore)
-      currentItems = currentItems.filter((item) => !item.name.startsWith("."));
       // Sort: dirs first, then alpha
       currentItems.sort((a, b) => {
         if (a.type === "dir" && b.type !== "dir") return -1;
@@ -363,6 +441,7 @@
   function hideAll() {
     fileGrid.classList.add("hidden");
     viewer.classList.add("hidden");
+    codeViewer.classList.add("hidden");
     errorState.classList.add("hidden");
     emptyState.classList.add("hidden");
     viewerFallback.classList.add("hidden");
@@ -520,68 +599,219 @@
     }
   }
 
-  // ── Document viewer ────────────────────────────────────
-  function openViewer(item) {
+  // ── Escape HTML ────────────────────────────────────────
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // ── Syntax Highlighter (Zero-dependency) ───────────────
+  function highlightSyntax(lineText, ext) {
+    if (!lineText) return "&nbsp;";
+    const e = (ext || "").toLowerCase();
+
+    let escaped = escapeHtml(lineText);
+
+    // Comments
+    let commentText = "";
+    if (["js", "ts", "jsx", "tsx", "java", "c", "cpp", "h", "hpp", "cs", "go", "rs", "php", "css"].includes(e)) {
+      const idx = escaped.indexOf("//");
+      if (idx !== -1) {
+        commentText = escaped.substring(idx);
+        escaped = escaped.substring(0, idx);
+      }
+    } else if (["py", "sh", "bash", "zsh", "yaml", "yml", "toml", "ini", "dockerfile", "makefile", "rb", "env"].includes(e)) {
+      const idx = escaped.indexOf("#");
+      if (idx !== -1) {
+        commentText = escaped.substring(idx);
+        escaped = escaped.substring(0, idx);
+      }
+    } else if (["sql"].includes(e)) {
+      const idx = escaped.indexOf("--");
+      if (idx !== -1) {
+        commentText = escaped.substring(idx);
+        escaped = escaped.substring(0, idx);
+      }
+    } else if (["html", "xml", "svg"].includes(e)) {
+      const idx = escaped.indexOf("&lt;!--");
+      if (idx !== -1) {
+        commentText = escaped.substring(idx);
+        escaped = escaped.substring(0, idx);
+      }
+    }
+
+    // Strings
+    escaped = escaped.replace(/(&quot;.*?&quot;|&#39;.*?&#39;|`.*?`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g, '<span class="syn-string">$1</span>');
+
+    // Numbers
+    escaped = escaped.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="syn-number">$1</span>');
+
+    // Keywords
+    const keywords = [
+      "function", "def", "class", "import", "from", "export", "default", "return", "if", "else", "elif",
+      "for", "while", "do", "switch", "case", "break", "continue", "try", "catch", "except", "finally",
+      "throw", "raise", "async", "await", "new", "this", "self", "const", "let", "var", "public",
+      "private", "protected", "static", "void", "int", "float", "double", "boolean", "bool", "string",
+      "char", "struct", "enum", "interface", "type", "package", "namespace", "using", "fn", "mut",
+      "SELECT", "FROM", "WHERE", "INSERT", "INTO", "UPDATE", "DELETE", "JOIN", "LEFT", "RIGHT", "INNER",
+      "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "CREATE", "TABLE", "DATABASE", "DROP", "ALTER", "AS",
+      "AND", "OR", "NOT", "IN", "IS", "NULL"
+    ];
+    const kwRegex = new RegExp(`\\b(${keywords.join("|")})\\b`, "g");
+    escaped = escaped.replace(kwRegex, '<span class="syn-keyword">$1</span>');
+
+    // Booleans & null
+    escaped = escaped.replace(/\b(true|false|True|False|null|undefined|None|nil)\b/g, '<span class="syn-bool">$1</span>');
+
+    // HTML / XML tags
+    if (["html", "xml", "svg", "jsx", "tsx"].includes(e)) {
+      escaped = escaped.replace(/(&lt;\/?[a-zA-Z0-9\-]+)(&gt;|\s)/g, '<span class="syn-tag">$1</span>$2');
+    }
+
+    // Append comment
+    if (commentText) {
+      escaped += `<span class="syn-comment">${commentText}</span>`;
+    }
+
+    return escaped;
+  }
+
+  // ── Document & Code viewer ─────────────────────────────
+  async function openViewer(item, updateHistory = true) {
     currentFile = item;
     hideAll();
 
     // Show toolbar
     toolbar.classList.remove("hidden");
     toolbarFilename.textContent = item.name;
+    toolbarFilename.title = item.name;
     downloadBtn.href = item.download_url || "#";
 
-    // Determine viewer URL
+    if (updateHistory) {
+      updateUrl({ file: item.path });
+    }
+
     const ext = getFileExt(item.name);
     const encodedUrl = encodeURIComponent(item.download_url);
-    let viewerUrl = "";
 
-    if (ext === "pdf") {
-      // Raw GitHub URLs set Content-Disposition: attachment, blocking iframe rendering.
-      // Use Google Docs Viewer to proxy and render the PDF.
-      viewerUrl = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
-    } else if (["ppt", "pptx"].includes(ext)) {
-      viewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodedUrl}`;
-    }
+    if (isCodeOrText(item.name)) {
+      // CODE & TEXT VIEWER
+      viewer.classList.remove("hidden");
+      viewerFrame.classList.add("hidden");
+      viewerFallback.classList.add("hidden");
+      codeViewer.classList.remove("hidden");
+      viewerLoading.classList.remove("loaded");
 
-    // Show loading overlay
-    viewerLoading.classList.remove("loaded");
+      const langName = CODE_EXT_MAP[ext] || (ext ? ext.toUpperCase() : "TEXT");
+      codeLangBadge.textContent = langName;
+      codeStats.textContent = "Loading file…";
+      codeLines.innerHTML = "";
 
-    // Show viewer
-    viewer.classList.remove("hidden");
-    viewerFrame.src = viewerUrl;
+      try {
+        const res = await fetch(item.download_url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch file content.`);
+        const text = await res.text();
+        currentRawCode = text;
 
-    // Hide loading overlay once iframe loads
-    viewerFrame.onload = () => {
-      viewerLoading.classList.add("loaded");
-    };
+        const lines = text.split(/\r\n|\r|\n/);
+        const lineCount = lines.length;
+        const sizeStr = formatSize(new Blob([text]).size);
+        codeStats.textContent = `${lineCount} line${lineCount === 1 ? "" : "s"} • ${sizeStr}`;
 
-    // Show fallback bar for all viewable files
-    viewerFallback.classList.remove("hidden");
-    if (ext === "pdf") {
-      fallbackLink.href = item.download_url;
-      fallbackLink.textContent = "Open PDF Directly";
+        const frag = document.createDocumentFragment();
+        lines.forEach((l, idx) => {
+          const row = document.createElement("div");
+          row.className = "code-line";
+          row.innerHTML = `<span class="line-num">${idx + 1}</span><span class="line-code">${highlightSyntax(l, ext)}</span>`;
+          frag.appendChild(row);
+        });
+        codeLines.appendChild(frag);
+      } catch (err) {
+        codeLines.innerHTML = `<div class="code-line"><span class="line-num">!</span><span class="line-code syn-comment">Error loading file: ${escapeHtml(err.message)}</span></div>`;
+        codeStats.textContent = "Error";
+      } finally {
+        viewerLoading.classList.add("loaded");
+      }
     } else {
-      fallbackLink.href = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
-      fallbackLink.textContent = "Open in Google Docs Viewer";
-    }
-    fallbackDownload.href = item.download_url || "#";
+      // PDF & PPTX EMBEDDED VIEWER
+      codeViewer.classList.add("hidden");
+      viewerFrame.classList.remove("hidden");
+      viewerLoading.classList.remove("loaded");
 
-    // Close sidebar on mobile
+      let viewerUrl = "";
+      if (ext === "pdf") {
+        viewerUrl = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
+      } else if (["ppt", "pptx"].includes(ext)) {
+        viewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodedUrl}`;
+      }
+
+      viewer.classList.remove("hidden");
+      viewerFrame.src = viewerUrl;
+
+      viewerFrame.onload = () => {
+        viewerLoading.classList.add("loaded");
+      };
+
+      // Fallback bar
+      viewerFallback.classList.remove("hidden");
+      if (ext === "pdf") {
+        fallbackLink.href = item.download_url;
+        fallbackLink.textContent = "Open PDF Directly";
+      } else {
+        fallbackLink.href = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
+        fallbackLink.textContent = "Open in Google Docs Viewer";
+      }
+      fallbackDownload.href = item.download_url || "#";
+    }
+
     closeSidebar();
   }
 
   // ── Back button ────────────────────────────────────────
   backBtn.addEventListener("click", () => {
     if (currentFile) {
-      // Go back to current directory listing
       currentFile = null;
-      navigateTo(currentPath);
+      navigateTo(currentPath, true);
     } else if (currentPath) {
       const parts = currentPath.split("/");
       parts.pop();
-      navigateTo(parts.join("/"));
+      navigateTo(parts.join("/"), true);
     }
   });
+
+  // ── Share button ───────────────────────────────────────
+  if (shareBtn) {
+    shareBtn.addEventListener("click", () => {
+      const shareUrl = window.location.href;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(shareUrl).then(() => {
+          showToast("Shareable link copied to clipboard! 🔗");
+        }).catch(() => {
+          prompt("Copy this shareable link:", shareUrl);
+        });
+      } else {
+        prompt("Copy this shareable link:", shareUrl);
+      }
+    });
+  }
+
+  // ── Copy Code button ───────────────────────────────────
+  if (copyCodeBtn) {
+    copyCodeBtn.addEventListener("click", () => {
+      if (!currentRawCode) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(currentRawCode).then(() => {
+          const original = copyCodeBtn.textContent;
+          copyCodeBtn.textContent = "✓ Copied!";
+          showToast("Code copied to clipboard!");
+          setTimeout(() => { copyCodeBtn.textContent = original; }, 2000);
+        }).catch(() => {
+          showToast("Could not copy to clipboard.");
+        });
+      }
+    });
+  }
 
   // ── Fullscreen ─────────────────────────────────────────
   fullscreenBtn.addEventListener("click", () => {
@@ -640,12 +870,6 @@
     navigateTo(currentPath);
   });
 
-  // ── Escape HTML ────────────────────────────────────────
-  function escapeHtml(str) {
-    const div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
-  }
 
   // ── Toast Pill (Android-style) ─────────────────────────
   let toastTimeout = null;
@@ -857,15 +1081,122 @@
     });
   }
 
-  // ── Boot ────────────────────────────────────────────────
-  function boot() {
+  // Clickable platform chips in Developer Options
+  if (devPlatformsGuide) {
+    devPlatformsGuide.addEventListener("click", (e) => {
+      const chip = e.target.closest(".platform-chip");
+      if (!chip) return;
+      const example = chip.dataset.example;
+      if (example && devRepoInput) {
+        devRepoInput.value = example;
+        devRepoInput.focus();
+        devRepoInput.select();
+      }
+    });
+  }
+
+  // ── Browser Back/Forward (popstate) ────────────────────
+  window.addEventListener("popstate", async () => {
+    const params = new URLSearchParams(window.location.search);
+    const repoParam = params.get("repo");
+    const fileParam = params.get("file");
+    const pathParam = params.get("path") || "";
+
+    if (repoParam) {
+      const parsed = parseRepoUrl(repoParam);
+      if (parsed) {
+        currentRepo = parsed;
+        updateRepoUI();
+      }
+    } else {
+      currentRepo = { ...DEFAULT_REPO };
+      updateRepoUI();
+    }
+
+    if (fileParam) {
+      const normFile = fileParam.replace(/^\/+|\/+$/g, "");
+      const folderPath = normFile.includes("/") ? normFile.substring(0, normFile.lastIndexOf("/")) : "";
+      try {
+        const items = await fetchContents(folderPath);
+        currentItems = Array.isArray(items) ? items : [];
+        const target = currentItems.find((it) => it.path === normFile || it.name === normFile.split("/").pop());
+        if (target && isViewable(target.name)) {
+          openViewer(target, false);
+          return;
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (currentFile) {
+      currentFile = null;
+    }
+    navigateTo(pathParam, false);
+  });
+
+  // ── Boot with Deep Link Routing ────────────────────────
+  async function boot() {
     updateRepoUI();
+
+    const params = new URLSearchParams(window.location.search);
+    const repoParam = params.get("repo");
+    const fileParam = params.get("file");
+    const pathParam = params.get("path");
+
+    // 1. Repo deep link (e.g. ?repo=owner/repo or ?repo=https://gitlab.com/...)
+    if (repoParam) {
+      const parsed = parseRepoUrl(repoParam);
+      if (parsed) {
+        currentRepo = parsed;
+        updateRepoUI();
+      }
+    }
+
+    // 2. Direct file deep link (e.g. ?file=DMW/Unit1.pdf or ?repo=...&file=slides.pptx)
+    if (fileParam) {
+      const normFile = fileParam.replace(/^\/+|\/+$/g, "");
+      const folderPath = normFile.includes("/") ? normFile.substring(0, normFile.lastIndexOf("/")) : "";
+      const fileName = normFile.includes("/") ? normFile.substring(normFile.lastIndexOf("/") + 1) : normFile;
+
+      currentPath = folderPath;
+      renderBreadcrumbs(folderPath);
+
+      try {
+        const items = await fetchContents(folderPath);
+        currentItems = Array.isArray(items) ? items : [];
+        currentItems.sort((a, b) => {
+          if (a.type === "dir" && b.type !== "dir") return -1;
+          if (a.type !== "dir" && b.type === "dir") return 1;
+          return a.name.localeCompare(b.name);
+        });
+        renderFileGrid(currentItems);
+        renderSidebarTree(currentItems);
+
+        const target = currentItems.find((it) => it.path === normFile || it.name.toLowerCase() === fileName.toLowerCase());
+        if (target && isViewable(target.name)) {
+          openViewer(target, false);
+          return;
+        }
+      } catch (err) {
+        showError(err.message);
+        return;
+      }
+    }
+
+    // 3. Path deep link (e.g. ?path=DMW)
+    if (pathParam !== null) {
+      navigateTo(pathParam, false);
+      return;
+    }
+
+    // 4. Fallback to localStorage session memory (default repo only)
     let startPath = "";
-    try {
-      const saved = localStorage.getItem(LAST_PATH_KEY);
-      if (saved) startPath = saved;
-    } catch { /* ignore */ }
-    navigateTo(startPath);
+    if (isDefaultRepo()) {
+      try {
+        const saved = localStorage.getItem(LAST_PATH_KEY);
+        if (saved) startPath = saved;
+      } catch { /* ignore */ }
+    }
+    navigateTo(startPath, false);
   }
 
   if (document.readyState === "loading") {

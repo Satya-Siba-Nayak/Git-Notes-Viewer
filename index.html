@@ -58,6 +58,7 @@
       <button class="btn btn-back" id="backBtn">← Back</button>
       <span class="toolbar-filename" id="toolbarFilename"></span>
       <div class="toolbar-actions">
+        <button class="btn btn-share" id="shareBtn" title="Copy shareable link">🔗 Share</button>
         <a class="btn btn-download" id="downloadBtn" href="#" download>⬇ Download</a>
         <button class="btn btn-fullscreen" id="fullscreenBtn">⛶ Full Screen</button>
       </div>
@@ -73,7 +74,7 @@
         </div>
       </div>
 
-      <!-- Document viewer -->
+      <!-- Document & Code viewer -->
       <div class="viewer hidden" id="viewer">
         <div class="viewer-loading" id="viewerLoading">
           <div class="spinner"></div>
@@ -81,6 +82,21 @@
           <p class="viewer-loading-note">📎 Large files may take a moment to render.</p>
         </div>
         <iframe id="viewerFrame" title="Document Viewer" sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
+
+        <!-- In-Browser Code & Text Viewer -->
+        <div class="code-viewer hidden" id="codeViewer">
+          <div class="code-viewer-bar">
+            <div class="code-meta">
+              <span class="code-lang-badge" id="codeLangBadge">TEXT</span>
+              <span class="code-stats" id="codeStats">0 lines</span>
+            </div>
+            <button class="btn btn-copy" id="copyCodeBtn">📋 Copy Code</button>
+          </div>
+          <div class="code-scroll-area">
+            <div class="code-lines" id="codeLines"></div>
+          </div>
+        </div>
+
         <div class="viewer-fallback hidden" id="viewerFallback">
           <p>Having trouble viewing this file?</p>
           <a id="fallbackLink" class="btn btn-primary" href="#" target="_blank" rel="noopener">Open in Google Docs Viewer</a>
@@ -111,9 +127,9 @@
   <!-- Developer modal -->
   <div class="dev-overlay hidden" id="devOverlay">
     <div class="dev-modal">
+      <button type="button" class="dev-close-btn" id="devClose" aria-label="Close modal">✕</button>
       <div class="dev-modal-header">
         <h3>🔧 Developer Options</h3>
-        <button class="dev-close-btn" id="devClose" aria-label="Close modal">✕</button>
       </div>
       <label for="devRepoInput">Repository URL or shorthand</label>
       <input
@@ -123,18 +139,18 @@
         placeholder="https://github.com/... or gitlab.com/..."
         autocomplete="off"
       />
-      <div class="dev-platforms-guide">
-        <span class="platform-chip">🐙 GitHub</span>
-        <span class="platform-chip">🦊 GitLab</span>
-        <span class="platform-chip">🏔️ Codeberg</span>
-        <span class="platform-chip">☕ Gitea</span>
-        <span class="platform-chip">🪣 Bitbucket</span>
+      <div class="dev-platforms-guide" id="devPlatformsGuide">
+        <button type="button" class="platform-chip" data-example="https://github.com/Satya-Siba-Nayak/TYBCA">🐙 GitHub</button>
+        <button type="button" class="platform-chip" data-example="https://gitlab.com/gitlab-org/gitlab-foss">🦊 GitLab</button>
+        <button type="button" class="platform-chip" data-example="https://codeberg.org/forgejo/forgejo">🏔️ Codeberg</button>
+        <button type="button" class="platform-chip" data-example="https://gitea.com/gitea/tea">☕ Gitea</button>
+        <button type="button" class="platform-chip" data-example="https://bitbucket.org/workspace/repo">🪣 Bitbucket</button>
       </div>
       <p class="dev-hint">Supports full URLs or shorthands like <code>gl:owner/repo</code>, <code>cb:owner/repo</code>, <code>owner/repo</code>.</p>
       <div class="dev-actions">
-        <button class="btn" id="devReset">Reset Default</button>
-        <button class="btn" id="devCancel">Cancel</button>
-        <button class="btn btn-primary" id="devApply">Load Repository</button>
+        <button type="button" class="btn" id="devReset">Reset Default</button>
+        <button type="button" class="btn" id="devCancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="devApply">Load Repository</button>
       </div>
     </div>
   </div>
