@@ -4,8 +4,8 @@
    for instantaneous updates on deployment.
    ========================================================= */
 
-const CACHE_NAME = "studyportal-v3";
-const APP_SHELL = ["/", "/index.html", "/style.css?v=3", "/app.js?v=3", "/manifest.json"];
+const CACHE_NAME = "studyportal-v4";
+const APP_SHELL = ["/", "/index.html", "/style.css?v=4", "/app.js?v=4", "/manifest.json"];
 
 // Install – cache app shell
 self.addEventListener("install", (e) => {
@@ -29,15 +29,8 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
 
-  // External Git APIs & raw content: always network
-  if (
-    url.hostname.includes("github.com") ||
-    url.hostname.includes("githubusercontent.com") ||
-    url.hostname.includes("gitlab.com") ||
-    url.hostname.includes("codeberg.org") ||
-    url.hostname.includes("bitbucket.org") ||
-    url.pathname.includes("/api/")
-  ) {
+  // Only handle GET requests targeting our own origin (app shell); let all external APIs, git hosts & viewer services pass straight to network
+  if (e.request.method !== "GET" || url.origin !== self.location.origin) {
     return;
   }
 

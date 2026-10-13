@@ -1151,10 +1151,22 @@ button {
   overflow: hidden;
   position: relative;
   cursor: grab;
+  touch-action: none;
   background: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1px) 0 0 / 20px 20px, #090d13;
 }
 .image-stage:active {
   cursor: grabbing;
+}
+
+.search-path-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.72rem;
+  color: var(--accent);
+  margin-right: 6px;
 }
 
 #mediaImage {

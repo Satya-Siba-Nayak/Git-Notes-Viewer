@@ -285,6 +285,8 @@
   let currentItems = [];
   let currentFile = null;
   let currentRawText = "";
+  let currentBaseRawUrl = "";
+  let repoTreeCache = {}; // Keyed by platform_host_owner_name_branch
   let currentDocEngine = "google"; // "google" | "office" | "native"
   let isCodeWrapped = false;
   let isMarkdownRaw = false;
@@ -387,11 +389,28 @@
     return (bytes / 1048576).toFixed(1) + " MB";
   }
 
+  // ── XSS Sanitization & HTML Escaping ─────────────────────
   function escapeHtml(str) {
     if (!str) return "";
-    const div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function sanitizeUrl(url) {
+    const trimmed = (url || "").trim();
+    if (/^(javascript|vbscript|data):/i.test(trimmed)) return "#";
+    return trimmed;
+  }
+
+  function getBaseRawUrl(fileUrl) {
+    if (!fileUrl) return "";
+    const lastSlash = fileUrl.lastIndexOf("/");
+    if (lastSlash === -1) return "";
+    return fileUrl.substring(0, lastSlash + 1);
   }
 
   // ── Clipboard with Robust Fallback ──────────────────────
@@ -640,8 +659,84 @@
   sidebarClose.addEventListener("click", closeSidebar);
   sidebarOverlay.addEventListener("click", closeSidebar);
 
-  // ── API fetch with caching ─────────────────────────────
+  // ── GitHub Recursive Tree (1 Request for entire repo) ───
+  async function fetchRepoTree(repo) {
+    const treeKey = `${repo.platform}_${repo.host}_${repo.owner}_${repo.name}_${repo.branch || "HEAD"}`;
+    if (repoTreeCache[treeKey]) {
+      return repoTreeCache[treeKey];
+    }
+
+    // Check sessionStorage
+    const cacheKey = `studyportal_tree_${treeKey}`;
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          repoTreeCache[treeKey] = parsed;
+          return parsed;
+        }
+      } catch {}
+    }
+
+    // Only GitHub exposes the git/trees recursive API endpoint
+    if (repo.platform === "github" && repo.host === "github.com") {
+      try {
+        const branch = repo.branch || "HEAD";
+        const url = `https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.tree) && !data.truncated) {
+            const branchName = repo.branch && repo.branch !== "HEAD" ? repo.branch : "HEAD";
+            const items = data.tree
+              .filter((it) => !it.path.split("/").some((seg) => seg.startsWith(".")))
+              .map((it) => {
+                const parts = it.path.split("/");
+                const name = parts[parts.length - 1];
+                const isDir = it.type === "tree";
+                return {
+                  name,
+                  path: it.path,
+                  type: isDir ? "dir" : "file",
+                  size: it.size || null,
+                  download_url: isDir ? null : `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branchName}/${encodeURI(it.path)}`
+                };
+              });
+
+            repoTreeCache[treeKey] = items;
+            try {
+              sessionStorage.setItem(cacheKey, JSON.stringify(items));
+            } catch {}
+            return items;
+          }
+        }
+      } catch {
+        // Fall back to per-folder API
+      }
+    }
+
+    return null;
+  }
+
+  // ── API fetch with caching & tree fallback ──────────────
   async function fetchContents(path = "") {
+    // 1. Try to load from in-memory or sessionStorage recursive tree (costs 0 additional API requests)
+    const treeKey = `${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentRepo.branch || "HEAD"}`;
+    let tree = repoTreeCache[treeKey];
+    if (!tree) {
+      tree = await fetchRepoTree(currentRepo);
+    }
+
+    if (tree && Array.isArray(tree)) {
+      if (!path) {
+        return tree.filter((it) => !it.path.includes("/"));
+      }
+      const prefix = path + "/";
+      return tree.filter((it) => it.path.startsWith(prefix) && !it.path.slice(prefix.length).includes("/"));
+    }
+
+    // 2. Fallback to standard per-folder adapter API
     const cacheKey = `${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${path}`;
     const cached = sessionStorage.getItem(cacheKey);
     if (cached) {
@@ -756,8 +851,24 @@
     }
   }
 
-  // ── Render helpers ─────────────────────────────────────
+  // ── Render helpers & Media Teardown ────────────────────
   function hideAll() {
+    // Media & iframe cleanup on every navigation path
+    if (mediaVideo) {
+      mediaVideo.pause();
+      mediaVideo.removeAttribute("src");
+      mediaVideo.load();
+    }
+    if (mediaAudio) {
+      mediaAudio.pause();
+      mediaAudio.removeAttribute("src");
+      mediaAudio.load();
+    }
+    if (viewerFrame) {
+      viewerFrame.src = "about:blank";
+      viewerFrame.classList.add("hidden");
+    }
+
     fileGrid.classList.add("hidden");
     viewer.classList.add("hidden");
     codeViewer.classList.add("hidden");
@@ -773,7 +884,7 @@
     cards.forEach((c) => c.remove());
   }
 
-  function renderFileGrid(items) {
+  function renderFileGrid(items, isSearchResult = false) {
     clearFileCards();
     fileGrid.classList.remove("hidden");
 
@@ -792,8 +903,11 @@
       card.setAttribute("role", "button");
       card.setAttribute("aria-label", item.name);
 
-      const meta =
-        item.type === "dir" ? "Folder" : formatSize(item.size) || "File";
+      let meta = item.type === "dir" ? "Folder" : formatSize(item.size) || "File";
+      if (isSearchResult && item.path.includes("/")) {
+        const folder = item.path.substring(0, item.path.lastIndexOf("/"));
+        meta = `<span class="search-path-badge">${escapeHtml(folder)}</span> ${meta}`;
+      }
 
       card.innerHTML = `
         <span class="file-card-icon">${getIcon(item)}</span>
@@ -804,10 +918,18 @@
         <span class="file-card-arrow">${item.type === "dir" ? "›" : ""}</span>
       `;
 
-      card.addEventListener("click", () => handleItemClick(item));
+      card.addEventListener("click", () => {
+        if (isSearchResult) {
+          searchInput.value = "";
+        }
+        handleItemClick(item);
+      });
       card.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          if (isSearchResult) {
+            searchInput.value = "";
+          }
           handleItemClick(item);
         }
       });
@@ -918,78 +1040,46 @@
     }
   }
 
-  // ── Syntax Highlighter (Zero-dependency) ───────────────
+  // ── Syntax Highlighter (Single-Pass Tokenizer) ─────────
   function highlightSyntax(lineText, ext) {
     if (!lineText) return "&nbsp;";
     const e = (ext || "").toLowerCase();
+    const escaped = escapeHtml(lineText);
 
-    let escaped = escapeHtml(lineText);
+    // Single-pass regex prevents tokens from corrupting each other's HTML tags
+    const tokenRegex = /(&quot;(?:\\&quot;|[^&]|&(?!quot;))*?&quot;|&#39;(?:\\&#39;|[^&]|&(?!#39;))*?&#39;|`[\s\S]*?`)|(\/\/.*$|#.*$|--.*$|&lt;!--.*$)|(&lt;\/?[a-zA-Z0-9\-]+)(?=&gt;|\s)|(\b(?:true|false|True|False|null|undefined|None|nil)\b)|(\b(?:function|def|class|import|from|export|default|return|if|else|elif|for|while|do|switch|case|break|continue|try|catch|except|finally|throw|raise|async|await|new|this|self|const|let|var|public|private|protected|static|void|int|float|double|boolean|bool|string|char|struct|enum|interface|type|package|namespace|using|fn|mut|SELECT|FROM|WHERE|INSERT|INTO|UPDATE|DELETE|JOIN|LEFT|RIGHT|INNER|GROUP|BY|ORDER|HAVING|LIMIT|CREATE|TABLE|DATABASE|DROP|ALTER|AS|AND|OR|NOT|IN|IS|NULL)\b)|(\b\d+(?:\.\d+)?\b)/g;
 
-    // Comments
-    let commentText = "";
-    if (["js", "ts", "jsx", "tsx", "java", "c", "cpp", "h", "hpp", "cs", "go", "rs", "php", "css"].includes(e)) {
-      const idx = escaped.indexOf("//");
-      if (idx !== -1) {
-        commentText = escaped.substring(idx);
-        escaped = escaped.substring(0, idx);
+    return escaped.replace(tokenRegex, (match, str, comment, tag, bool, kw, num) => {
+      if (str) return `<span class="syn-string">${str}</span>`;
+      if (comment) {
+        const isSlash = comment.startsWith("//") && ["js", "ts", "jsx", "tsx", "java", "c", "cpp", "h", "hpp", "cs", "go", "rs", "php", "css"].includes(e);
+        const isHash = comment.startsWith("#") && ["py", "sh", "bash", "zsh", "yaml", "yml", "toml", "ini", "dockerfile", "makefile", "rb", "env"].includes(e);
+        const isSql = comment.startsWith("--") && e === "sql";
+        const isHtml = comment.startsWith("&lt;!--") && ["html", "xml", "svg"].includes(e);
+        if (isSlash || isHash || isSql || isHtml) return `<span class="syn-comment">${comment}</span>`;
+        return match;
       }
-    } else if (["py", "sh", "bash", "zsh", "yaml", "yml", "toml", "ini", "dockerfile", "makefile", "rb", "env"].includes(e)) {
-      const idx = escaped.indexOf("#");
-      if (idx !== -1) {
-        commentText = escaped.substring(idx);
-        escaped = escaped.substring(0, idx);
-      }
-    } else if (["sql"].includes(e)) {
-      const idx = escaped.indexOf("--");
-      if (idx !== -1) {
-        commentText = escaped.substring(idx);
-        escaped = escaped.substring(0, idx);
-      }
-    } else if (["html", "xml", "svg"].includes(e)) {
-      const idx = escaped.indexOf("&lt;!--");
-      if (idx !== -1) {
-        commentText = escaped.substring(idx);
-        escaped = escaped.substring(0, idx);
-      }
-    }
-
-    // Strings
-    escaped = escaped.replace(/(&quot;.*?&quot;|&#39;.*?&#39;|`.*?`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g, '<span class="syn-string">$1</span>');
-
-    // Numbers
-    escaped = escaped.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="syn-number">$1</span>');
-
-    // Keywords
-    const keywords = [
-      "function", "def", "class", "import", "from", "export", "default", "return", "if", "else", "elif",
-      "for", "while", "do", "switch", "case", "break", "continue", "try", "catch", "except", "finally",
-      "throw", "raise", "async", "await", "new", "this", "self", "const", "let", "var", "public",
-      "private", "protected", "static", "void", "int", "float", "double", "boolean", "bool", "string",
-      "char", "struct", "enum", "interface", "type", "package", "namespace", "using", "fn", "mut",
-      "SELECT", "FROM", "WHERE", "INSERT", "INTO", "UPDATE", "DELETE", "JOIN", "LEFT", "RIGHT", "INNER",
-      "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "CREATE", "TABLE", "DATABASE", "DROP", "ALTER", "AS",
-      "AND", "OR", "NOT", "IN", "IS", "NULL"
-    ];
-    const kwRegex = new RegExp(`\\b(${keywords.join("|")})\\b`, "g");
-    escaped = escaped.replace(kwRegex, '<span class="syn-keyword">$1</span>');
-
-    // Booleans & null
-    escaped = escaped.replace(/\b(true|false|True|False|null|undefined|None|nil)\b/g, '<span class="syn-bool">$1</span>');
-
-    // HTML / XML tags
-    if (["html", "xml", "svg", "jsx", "tsx"].includes(e)) {
-      escaped = escaped.replace(/(&lt;\/?[a-zA-Z0-9\-]+)(&gt;|\s)/g, '<span class="syn-tag">$1</span>$2');
-    }
-
-    // Append comment
-    if (commentText) {
-      escaped += `<span class="syn-comment">${commentText}</span>`;
-    }
-
-    return escaped;
+      if (tag && ["html", "xml", "svg", "jsx", "tsx"].includes(e)) return `<span class="syn-tag">${tag}</span>`;
+      if (bool) return `<span class="syn-bool">${bool}</span>`;
+      if (kw) return `<span class="syn-keyword">${kw}</span>`;
+      if (num) return `<span class="syn-number">${num}</span>`;
+      return match;
+    });
   }
 
-  // ── Zero-dependency Markdown Parser ─────────────────────
+  // ── Zero-dependency Markdown Parser (XSS-safe & nested) ─
+  function isTableDelimiter(line) {
+    const t = (line || "").trim();
+    return /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(t);
+  }
+
+  function parseTableLine(line) {
+    let t = line.trim();
+    if (t.startsWith("|")) t = t.slice(1);
+    if (t.endsWith("|")) t = t.slice(0, -1);
+    return t.split("|").map((c) => c.trim());
+  }
+
   function parseMarkdown(md, baseRawUrl = "") {
     if (!md) return "";
 
@@ -998,28 +1088,31 @@
     let inCodeBlock = false;
     let codeBlockLang = "";
     let codeBlockContent = [];
-    let inList = false;
-    let listType = "ul";
+    let listStack = [];
     let inTable = false;
     let tableRows = [];
 
-    function flushList() {
-      if (inList) {
-        htmlParts.push(`</${listType}>`);
-        inList = false;
+    function closeListsUpTo(indent) {
+      while (listStack.length > 0 && listStack[listStack.length - 1].indent > indent) {
+        const top = listStack.pop();
+        htmlParts.push(`</${top.type}>`);
+      }
+    }
+
+    function flushAllLists() {
+      while (listStack.length > 0) {
+        const top = listStack.pop();
+        htmlParts.push(`</${top.type}>`);
       }
     }
 
     function flushTable() {
       if (inTable && tableRows.length > 0) {
         let tableHtml = "<table>";
-        // First row is header
         const headerCells = tableRows[0];
         tableHtml += "<thead><tr>" + headerCells.map((c) => `<th>${formatInline(c)}</th>`).join("") + "</tr></thead><tbody>";
-        // Rest are rows (skipping delimiter row if index 1)
-        const startIndex = tableRows.length > 1 && tableRows[1].every((c) => /^:?-+:?$/.test(c.trim())) ? 2 : 1;
-        for (let i = startIndex; i < tableRows.length; i++) {
-          tableHtml += "<tr>" + tableRows[i].map((c) => `<td>${formatInline(c)}</td>`).join("") + "</tr>";
+        for (let r = 1; r < tableRows.length; r++) {
+          tableHtml += "<tr>" + tableRows[r].map((c) => `<td>${formatInline(c)}</td>`).join("") + "</tr>";
         }
         tableHtml += "</tbody></table>";
         htmlParts.push(tableHtml);
@@ -1030,9 +1123,7 @@
 
     function formatInline(text) {
       let t = escapeHtml(text);
-      // Code spans
       t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
-      // Bold + italic
       t = t.replace(/\*\*\*(.*?)\*\*\*/g, "<strong><em>$1</em></strong>");
       t = t.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
       t = t.replace(/\*(.*?)\*/g, "<em>$1</em>");
@@ -1043,10 +1134,12 @@
         if (baseRawUrl && !/^https?:\/\//i.test(fullSrc)) {
           fullSrc = baseRawUrl + fullSrc.replace(/^\.?\//, "");
         }
-        return `<img src="${fullSrc}" alt="${alt}" loading="lazy" class="md-img" />`;
+        return `<img src="${sanitizeUrl(fullSrc)}" alt="${alt}" loading="lazy" class="md-img" />`;
       });
       // Links: [text](url)
-      t = t.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      t = t.replace(/\[(.*?)\]\((.*?)\)/g, (match, text, url) => {
+        return `<a href="${sanitizeUrl(url)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+      });
       return t;
     }
 
@@ -1056,7 +1149,7 @@
       // Code blocks
       if (line.trim().startsWith("```")) {
         if (!inCodeBlock) {
-          flushList();
+          flushAllLists();
           flushTable();
           inCodeBlock = true;
           codeBlockLang = line.trim().slice(3).trim();
@@ -1076,16 +1169,14 @@
 
       const trimmed = line.trim();
 
-      // Empty line
       if (!trimmed) {
-        flushList();
         flushTable();
         continue;
       }
 
       // Horizontal Rule
       if (/^(\-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
-        flushList();
+        flushAllLists();
         flushTable();
         htmlParts.push("<hr />");
         continue;
@@ -1094,7 +1185,7 @@
       // Headers (# H1 to ###### H6)
       const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
       if (headerMatch) {
-        flushList();
+        flushAllLists();
         flushTable();
         const level = headerMatch[1].length;
         htmlParts.push(`<h${level}>${formatInline(headerMatch[2])}</h${level}>`);
@@ -1103,69 +1194,81 @@
 
       // Blockquote
       if (trimmed.startsWith(">")) {
-        flushList();
+        flushAllLists();
         flushTable();
         const quoteText = trimmed.replace(/^>\s?/, "");
         htmlParts.push(`<blockquote>${formatInline(quoteText)}</blockquote>`);
         continue;
       }
 
-      // Tables (| col | col |)
-      if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
-        flushList();
-        inTable = true;
-        const cells = trimmed
-          .slice(1, -1)
-          .split("|")
-          .map((c) => c.trim());
-        tableRows.push(cells);
-        continue;
-      } else {
+      // Tables (supports with or without outer pipes)
+      if (trimmed.includes("|")) {
+        if (!inTable) {
+          const nextLine = i + 1 < lines.length ? lines[i + 1].trim() : "";
+          if (isTableDelimiter(nextLine)) {
+            flushAllLists();
+            inTable = true;
+            tableRows.push(parseTableLine(trimmed));
+            continue;
+          }
+        } else {
+          if (isTableDelimiter(trimmed)) {
+            continue;
+          }
+          tableRows.push(parseTableLine(trimmed));
+          continue;
+        }
+      } else if (inTable) {
         flushTable();
       }
 
-      // Unordered lists (- or *)
+      // Lists (Nested ul/ol & task lists)
       const ulMatch = line.match(/^(\s*)[-*]\s+(.*)$/);
-      if (ulMatch) {
-        if (!inList || listType !== "ul") {
-          flushList();
-          htmlParts.push("<ul>");
-          inList = true;
-          listType = "ul";
-        }
-        let itemContent = ulMatch[2];
-        // Task list checkbox
-        if (itemContent.startsWith("[ ] ")) {
-          itemContent = '<input type="checkbox" disabled /> ' + itemContent.slice(4);
-        } else if (itemContent.startsWith("[x] ") || itemContent.startsWith("[X] ")) {
-          itemContent = '<input type="checkbox" checked disabled /> ' + itemContent.slice(4);
-        }
-        htmlParts.push(`<li>${formatInline(itemContent)}</li>`);
-        continue;
-      }
-
-      // Ordered lists (1.)
       const olMatch = line.match(/^(\s*)\d+\.\s+(.*)$/);
-      if (olMatch) {
-        if (!inList || listType !== "ol") {
-          flushList();
-          htmlParts.push("<ol>");
-          inList = true;
-          listType = "ol";
+      if (ulMatch || olMatch) {
+        flushTable();
+        const isUl = !!ulMatch;
+        const type = isUl ? "ul" : "ol";
+        const indent = (ulMatch || olMatch)[1].length;
+        let content = (ulMatch || olMatch)[2];
+
+        if (content.startsWith("[ ] ")) {
+          content = '<input type="checkbox" disabled /> ' + content.slice(4);
+        } else if (content.startsWith("[x] ") || content.startsWith("[X] ")) {
+          content = '<input type="checkbox" checked disabled /> ' + content.slice(4);
         }
-        htmlParts.push(`<li>${formatInline(olMatch[2])}</li>`);
+
+        if (listStack.length === 0) {
+          listStack.push({ type, indent });
+          htmlParts.push(`<${type}>`);
+        } else {
+          const top = listStack[listStack.length - 1];
+          if (indent > top.indent) {
+            listStack.push({ type, indent });
+            htmlParts.push(`<${type}>`);
+          } else if (indent < top.indent) {
+            closeListsUpTo(indent);
+            if (listStack.length === 0 || listStack[listStack.length - 1].indent < indent) {
+              listStack.push({ type, indent });
+              htmlParts.push(`<${type}>`);
+            }
+          } else if (top.type !== type) {
+            htmlParts.push(`</${top.type}>`);
+            top.type = type;
+            htmlParts.push(`<${type}>`);
+          }
+        }
+        htmlParts.push(`<li>${formatInline(content)}</li>`);
         continue;
       }
 
-      // Paragraph
-      flushList();
+      flushAllLists();
       flushTable();
       htmlParts.push(`<p>${formatInline(trimmed)}</p>`);
     }
 
-    flushList();
+    flushAllLists();
     flushTable();
-
     return htmlParts.join("\n");
   }
 
@@ -1205,14 +1308,9 @@
         const readMin = Math.max(1, Math.ceil(wordCount / 200));
         mdReadingTime.textContent = `${readMin} min read • ${wordCount} words`;
 
-        // Base URL for relative image assets
-        let baseRawUrl = "";
-        if (currentRepo.platform === "github") {
-          const folder = item.path.includes("/") ? item.path.substring(0, item.path.lastIndexOf("/") + 1) : "";
-          baseRawUrl = `https://raw.githubusercontent.com/${currentRepo.owner}/${currentRepo.name}/${currentRepo.branch || "HEAD"}/${folder}`;
-        }
-
-        markdownBody.innerHTML = parseMarkdown(text, baseRawUrl);
+        // Derive base raw URL directly from download_url for all Git platforms
+        currentBaseRawUrl = getBaseRawUrl(item.download_url);
+        markdownBody.innerHTML = parseMarkdown(text, currentBaseRawUrl);
         isMarkdownRaw = false;
         mdModeToggle.textContent = "💻 Raw Code";
       } catch (err) {
@@ -1224,7 +1322,7 @@
       return;
     }
 
-    // 2. IMAGE PREVIEW (with Zoom & Pan)
+    // 2. IMAGE PREVIEW (with Mobile Pointer Zoom & Pan)
     if (isImage(item.name)) {
       viewer.classList.remove("hidden");
       mediaViewer.classList.remove("hidden");
@@ -1261,7 +1359,7 @@
       videoViewerContainer.classList.remove("hidden");
       imageViewerContainer.classList.add("hidden");
       audioViewerContainer.classList.add("hidden");
-      viewerLoading.classList.add("loaded");
+      viewerLoading.classList.remove("loaded");
 
       mediaVideo.src = item.download_url;
       mediaVideo.play().catch(() => {});
@@ -1276,7 +1374,7 @@
       audioViewerContainer.classList.remove("hidden");
       imageViewerContainer.classList.add("hidden");
       videoViewerContainer.classList.add("hidden");
-      viewerLoading.classList.add("loaded");
+      viewerLoading.classList.remove("loaded");
 
       audioTitle.textContent = item.name;
       audioSub.textContent = `Audio lecture file • ${formatSize(item.size)}`;
@@ -1388,7 +1486,7 @@
     });
   }
 
-  // ── Image Zoom & Pan Handlers ───────────────────────────
+  // ── Image Zoom & Pointer Pan Handlers (Mobile + Desktop) ─
   function applyImageTransform() {
     if (!mediaImage) return;
     mediaImage.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomScale})`;
@@ -1436,23 +1534,30 @@
       applyImageTransform();
     }, { passive: false });
 
-    imageStage.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
+    // Pointer events support mouse, touch finger, and pen stylus seamlessly
+    imageStage.addEventListener("pointerdown", (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
       isPanning = true;
       startPanX = e.clientX - panX;
       startPanY = e.clientY - panY;
+      try { imageStage.setPointerCapture(e.pointerId); } catch {}
     });
 
-    window.addEventListener("mousemove", (e) => {
+    imageStage.addEventListener("pointermove", (e) => {
       if (!isPanning) return;
       panX = e.clientX - startPanX;
       panY = e.clientY - startPanY;
       applyImageTransform();
     });
 
-    window.addEventListener("mouseup", () => {
+    const endPan = (e) => {
+      if (!isPanning) return;
       isPanning = false;
-    });
+      try { imageStage.releasePointerCapture(e.pointerId); } catch {}
+    };
+
+    imageStage.addEventListener("pointerup", endPan);
+    imageStage.addEventListener("pointercancel", endPan);
 
     imageStage.addEventListener("dblclick", () => {
       resetImageZoom();
@@ -1468,7 +1573,7 @@
         markdownBody.innerHTML = `<pre><code>${escapeHtml(currentRawText)}</code></pre>`;
       } else {
         mdModeToggle.textContent = "💻 Raw Code";
-        markdownBody.innerHTML = parseMarkdown(currentRawText);
+        markdownBody.innerHTML = parseMarkdown(currentRawText, currentBaseRawUrl);
       }
     });
   }
@@ -1517,10 +1622,6 @@
 
   // ── Back button ────────────────────────────────────────
   backBtn.addEventListener("click", () => {
-    // Stop video/audio if playing
-    if (mediaVideo) { mediaVideo.pause(); mediaVideo.src = ""; }
-    if (mediaAudio) { mediaAudio.pause(); mediaAudio.src = ""; }
-
     if (currentFile) {
       currentFile = null;
       navigateTo(currentPath, true);
@@ -1575,9 +1676,10 @@
     }
   });
 
-  // ── Search / filter ────────────────────────────────────
+  // ── Instant Global Search across all Subfolders ────────
   searchInput.addEventListener("input", () => {
     const query = searchInput.value.toLowerCase().trim();
+
     // Filter sidebar tree items
     const treeItems = fileTree.querySelectorAll(".tree-item");
     treeItems.forEach((el) => {
@@ -1589,12 +1691,24 @@
       el.classList.toggle("hidden", !name.includes(query));
     });
 
-    // Filter main grid cards
-    if (!currentFile) {
-      const filtered = query
-        ? currentItems.filter((it) => it.name.toLowerCase().includes(query))
-        : currentItems;
-      renderFileGrid(filtered);
+    if (currentFile) return;
+
+    if (!query) {
+      renderFileGrid(currentItems, false);
+      return;
+    }
+
+    // Try global search across cached repo tree
+    const treeKey = `${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentRepo.branch || "HEAD"}`;
+    const tree = repoTreeCache[treeKey];
+
+    if (tree && Array.isArray(tree)) {
+      const matches = tree.filter((it) => it.name.toLowerCase().includes(query) || it.path.toLowerCase().includes(query));
+      renderFileGrid(matches, true);
+    } else {
+      // Local folder filter fallback
+      const filtered = currentItems.filter((it) => it.name.toLowerCase().includes(query));
+      renderFileGrid(filtered, false);
     }
   });
 
@@ -1764,6 +1878,8 @@
     updateRepoUI();
     const platInfo = PLATFORMS[parsedRepo.platform] || { icon: "📁" };
     showToast(`Loaded ${platInfo.icon} ${parsedRepo.owner}/${parsedRepo.name}`);
+    // Pre-fetch tree in background
+    fetchRepoTree(parsedRepo).catch(() => {});
     navigateTo("");
   }
 
@@ -1786,6 +1902,7 @@
     updateRepoUI();
     closeDevModal();
     showToast("Reset to default repository (TYBCA)");
+    fetchRepoTree(currentRepo).catch(() => {});
     navigateTo("");
   }
 
@@ -1879,6 +1996,9 @@
         updateRepoUI();
       }
     }
+
+    // Pre-fetch tree in background to speed up navigation and enable instant global search
+    fetchRepoTree(currentRepo).catch(() => {});
 
     // 2. Direct file deep link
     if (fileParam) {
