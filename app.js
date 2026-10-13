@@ -1129,18 +1129,25 @@
     if (!isSearchResult && !currentFile && folderReadmeSection && folderReadmeBody) {
       const readmeItem = items.find((i) => i.type !== "dir" && i.name.toLowerCase() === "readme.md");
       if (readmeItem && readmeItem.download_url) {
+        const expectedPath = currentPath;
         folderReadmeSection.classList.remove("hidden");
         if (folderReadmeTitle) folderReadmeTitle.textContent = readmeItem.name;
         folderReadmeBody.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span>Loading README…</span></div>';
         fetch(readmeItem.download_url)
-          .then((r) => r.text())
+          .then((r) => {
+            if (!r.ok) throw new Error("Failed to load README");
+            return r.text();
+          })
           .then((text) => {
+            if (currentPath !== expectedPath || currentFile) return;
             const baseRawUrl = getBaseRawUrl(readmeItem.download_url);
             const parsed = parseMarkdown(text, baseRawUrl);
             folderReadmeBody.innerHTML = parsed.html;
           })
           .catch(() => {
-            folderReadmeSection.classList.add("hidden");
+            if (currentPath === expectedPath) {
+              folderReadmeSection.classList.add("hidden");
+            }
           });
       } else {
         folderReadmeSection.classList.add("hidden");
@@ -1298,6 +1305,7 @@
     const lines = md.split(/\r\n|\r|\n/);
     const htmlParts = [];
     const headings = [];
+    const slugCounts = {};
     let inCodeBlock = false;
     let codeBlockLang = "";
     let codeBlockContent = [];
@@ -1351,7 +1359,11 @@
       });
       // Links: [text](url)
       t = t.replace(/\[(.*?)\]\((.*?)\)/g, (match, text, url) => {
-        return `<a href="${sanitizeUrl(url)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+        const safeUrl = sanitizeUrl(url);
+        if (safeUrl.startsWith("#")) {
+          return `<a href="${safeUrl}">${text}</a>`;
+        }
+        return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${text}</a>`;
       });
       return t;
     }
@@ -1404,7 +1416,16 @@
         flushTable();
         const level = headerMatch[1].length;
         const rawHeaderText = headerMatch[2].trim();
-        const slug = rawHeaderText.toLowerCase().replace(/<[^>]+>/g, "").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-") || `heading-${i}`;
+        const baseSlug =
+          rawHeaderText
+            .toLowerCase()
+            .replace(/<[^>]+>/g, "")
+            .replace(/[^\w\s-]/g, "")
+            .trim()
+            .replace(/\s+/g, "-") || `heading-${i}`;
+        const count = slugCounts[baseSlug] || 0;
+        slugCounts[baseSlug] = count + 1;
+        const slug = count === 0 ? baseSlug : `${baseSlug}-${count}`;
         headings.push({ level, text: rawHeaderText, slug });
         htmlParts.push(`<h${level} id="${slug}"><a class="header-anchor" href="#${slug}" title="Direct link">#</a>${formatInline(rawHeaderText)}</h${level}>`);
         continue;
@@ -1577,6 +1598,26 @@
   async function openViewer(item, updateHistory = true) {
     currentFile = item;
     hideAll();
+
+    // Sync folder context if jumping to a file from Pinned Resources or Global Search
+    const parentPath = item.path.includes("/")
+      ? item.path.substring(0, item.path.lastIndexOf("/"))
+      : "";
+    if (parentPath !== currentPath || currentItems.length === 0) {
+      currentPath = parentPath;
+      renderBreadcrumbs(currentPath);
+      fetchContents(currentPath).then((items) => {
+        currentItems = (items || []).sort((a, b) => {
+          if (a.type === "dir" && b.type !== "dir") return -1;
+          if (a.type !== "dir" && b.type === "dir") return 1;
+          return a.name.localeCompare(b.name);
+        });
+        renderSidebarTree(currentItems);
+        if (currentFile && currentFile.path === item.path) {
+          updateFileNavButtons(item);
+        }
+      }).catch(() => {});
+    }
 
     // Show toolbar
     toolbar.classList.remove("hidden");
@@ -2085,8 +2126,15 @@
       }
     }
 
-    // Arrow navigation when viewing files
-    if (currentFile && !isInput) {
+    // Arrow navigation when viewing files (ignore during video/audio playback or unwrapped code scroll)
+    const isMediaActive = isVideo(currentFile?.name || "") || isAudio(currentFile?.name || "");
+    const isCodeHorizScroll =
+      isCodeOrText(currentFile?.name || "") &&
+      !isCodeWrapped &&
+      codeScrollArea &&
+      codeScrollArea.scrollWidth > codeScrollArea.clientWidth;
+
+    if (currentFile && !isInput && !isMediaActive && !isCodeHorizScroll) {
       if (e.key === "ArrowLeft" && prevFileBtn && !prevFileBtn.disabled) {
         e.preventDefault();
         prevFileBtn.click();
