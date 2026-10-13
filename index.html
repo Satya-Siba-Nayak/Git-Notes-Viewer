@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Study Portal</title>
-  <link rel="stylesheet" href="style.css?v=4" />
+  <link rel="stylesheet" href="style.css?v=5" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -31,10 +31,11 @@
         type="text"
         id="searchInput"
         class="search-input"
-        placeholder="Filter files & folders…"
+        placeholder="Filter or search all files… (Press /)"
         autocomplete="off"
         spellcheck="false"
       />
+      <kbd class="search-shortcut" id="searchShortcut" title="Press / to search">/</kbd>
     </div>
     <nav class="file-tree" id="fileTree">
       <div class="loading-spinner" id="sidebarLoader">
@@ -84,9 +85,16 @@
 
     <!-- Toolbar (visible when viewing a file) -->
     <div class="toolbar hidden" id="toolbar">
-      <button type="button" class="btn btn-back" id="backBtn">← Back</button>
+      <div class="toolbar-nav">
+        <button type="button" class="btn btn-back" id="backBtn">← Back</button>
+        <div class="file-nav-group">
+          <button type="button" class="btn btn-nav" id="prevFileBtn" title="Previous file (Arrow Left)" disabled>‹</button>
+          <button type="button" class="btn btn-nav" id="nextFileBtn" title="Next file (Arrow Right)" disabled>›</button>
+        </div>
+      </div>
       <span class="toolbar-filename" id="toolbarFilename"></span>
       <div class="toolbar-actions">
+        <button type="button" class="btn btn-star" id="toolbarStarBtn" title="Pin / star this file">⭐ Pin</button>
         <button type="button" class="btn btn-share" id="shareBtn" title="Copy shareable link">🔗 Share</button>
         <a class="btn btn-download" id="downloadBtn" href="#" download>⬇ Download</a>
         <button type="button" class="btn btn-fullscreen" id="fullscreenBtn">⛶ Full Screen</button>
@@ -95,12 +103,30 @@
 
     <!-- Content area: file listing OR document viewer -->
     <section class="content" id="content">
+      <!-- Pinned / Starred Resources -->
+      <div class="pinned-section hidden" id="pinnedSection">
+        <div class="pinned-header">
+          <span class="pinned-title">⭐ Pinned Resources</span>
+          <span class="pinned-count" id="pinnedCount">0 files</span>
+        </div>
+        <div class="pinned-grid" id="pinnedGrid"></div>
+      </div>
+
       <!-- File listing grid -->
       <div class="file-grid" id="fileGrid">
         <div class="loading-spinner" id="contentLoader">
           <div class="spinner"></div>
           <span>Loading contents…</span>
         </div>
+      </div>
+
+      <!-- Auto-rendered Folder README -->
+      <div class="folder-readme-section hidden" id="folderReadmeSection">
+        <div class="folder-readme-header">
+          <span class="readme-icon">📖</span>
+          <span class="readme-title" id="folderReadmeTitle">README.md</span>
+        </div>
+        <article class="markdown-body folder-readme-body" id="folderReadmeBody"></article>
       </div>
 
       <!-- Document & Media viewer -->
@@ -144,12 +170,22 @@
               <span class="md-stats" id="mdReadingTime">1 min read</span>
             </div>
             <div class="markdown-actions">
+              <button type="button" class="btn btn-sm hidden" id="mdTocToggle" title="Table of Contents">📑 Contents</button>
               <button type="button" class="btn btn-sm" id="mdModeToggle">💻 Raw Code</button>
               <button type="button" class="btn btn-copy" id="copyMdBtn">📋 Copy Notes</button>
             </div>
           </div>
-          <div class="markdown-scroll-area">
-            <article class="markdown-body" id="markdownBody"></article>
+          <div class="markdown-layout">
+            <aside class="markdown-toc hidden" id="markdownToc">
+              <div class="toc-header">
+                <span>📑 Table of Contents</span>
+                <button type="button" class="toc-close-btn" id="tocCloseBtn" title="Close TOC">✕</button>
+              </div>
+              <nav class="toc-list" id="tocList"></nav>
+            </aside>
+            <div class="markdown-scroll-area" id="markdownScrollArea">
+              <article class="markdown-body" id="markdownBody"></article>
+            </div>
           </div>
         </div>
 
@@ -280,6 +316,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

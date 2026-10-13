@@ -19,6 +19,7 @@
   const CACHE_PREFIX = "studyportal_cache_";
   const LAST_PATH_KEY = "studyportal_lastpath";
   const RECENT_REPOS_KEY = "studyportal_recent_repos";
+  const STARRED_KEY = "studyportal_starred";
 
   const PLATFORMS = {
     github: { name: "GitHub", icon: "🐙", host: "github.com" },
@@ -209,12 +210,16 @@
   const sidebarClose = document.getElementById("sidebarClose");
   const menuBtn = document.getElementById("menuBtn");
   const searchInput = document.getElementById("searchInput");
+  const searchShortcut = document.getElementById("searchShortcut");
   const fileTree = document.getElementById("fileTree");
   const sidebarLoader = document.getElementById("sidebarLoader");
   const breadcrumbs = document.getElementById("breadcrumbs");
   const toolbar = document.getElementById("toolbar");
   const toolbarFilename = document.getElementById("toolbarFilename");
   const backBtn = document.getElementById("backBtn");
+  const prevFileBtn = document.getElementById("prevFileBtn");
+  const nextFileBtn = document.getElementById("nextFileBtn");
+  const toolbarStarBtn = document.getElementById("toolbarStarBtn");
   const downloadBtn = document.getElementById("downloadBtn");
   const fullscreenBtn = document.getElementById("fullscreenBtn");
   const shareBtn = document.getElementById("shareBtn");
@@ -225,8 +230,14 @@
   const switcherName = document.getElementById("switcherName");
   const switcherList = document.getElementById("switcherList");
   const switcherCustomBtn = document.getElementById("switcherCustomBtn");
+  const pinnedSection = document.getElementById("pinnedSection");
+  const pinnedCount = document.getElementById("pinnedCount");
+  const pinnedGrid = document.getElementById("pinnedGrid");
   const fileGrid = document.getElementById("fileGrid");
   const contentLoader = document.getElementById("contentLoader");
+  const folderReadmeSection = document.getElementById("folderReadmeSection");
+  const folderReadmeTitle = document.getElementById("folderReadmeTitle");
+  const folderReadmeBody = document.getElementById("folderReadmeBody");
   const viewer = document.getElementById("viewer");
   const viewerLoading = document.getElementById("viewerLoading");
   const viewerFrame = document.getElementById("viewerFrame");
@@ -240,6 +251,10 @@
   const markdownViewer = document.getElementById("markdownViewer");
   const markdownBody = document.getElementById("markdownBody");
   const mdReadingTime = document.getElementById("mdReadingTime");
+  const mdTocToggle = document.getElementById("mdTocToggle");
+  const markdownToc = document.getElementById("markdownToc");
+  const tocCloseBtn = document.getElementById("tocCloseBtn");
+  const tocList = document.getElementById("tocList");
   const mdModeToggle = document.getElementById("mdModeToggle");
   const copyMdBtn = document.getElementById("copyMdBtn");
   const mediaViewer = document.getElementById("mediaViewer");
@@ -287,6 +302,7 @@
   let currentRawText = "";
   let currentBaseRawUrl = "";
   let repoTreeCache = {}; // Keyed by platform_host_owner_name_branch
+  let inFlightTrees = {}; // Prevents duplicate parallel requests on boot
   let currentDocEngine = "google"; // "google" | "office" | "native"
   let isCodeWrapped = false;
   let isMarkdownRaw = false;
@@ -456,6 +472,121 @@
     }, duration);
   }
 
+  // ── Pinned / Starred Resources ─────────────────────────
+  function getStarredFiles() {
+    try {
+      const data = localStorage.getItem(STARRED_KEY);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function isStarred(item) {
+    if (!item || !item.path) return false;
+    const list = getStarredFiles();
+    const repoKey = getRepoString(currentRepo);
+    return list.some((f) => f.repoKey === repoKey && f.path === item.path);
+  }
+
+  function toggleStar(item) {
+    if (!item || !item.path) return false;
+    const list = getStarredFiles();
+    const repoKey = getRepoString(currentRepo);
+    const idx = list.findIndex((f) => f.repoKey === repoKey && f.path === item.path);
+    let nowStarred = false;
+
+    if (idx !== -1) {
+      list.splice(idx, 1);
+      nowStarred = false;
+      showToast("Removed from pinned resources");
+    } else {
+      list.unshift({
+        repoKey,
+        path: item.path,
+        name: item.name,
+        type: item.type || "file",
+        size: item.size || null,
+        download_url: item.download_url
+      });
+      nowStarred = true;
+      showToast("⭐ Pinned to resources!");
+    }
+
+    try {
+      localStorage.setItem(STARRED_KEY, JSON.stringify(list.slice(0, 20)));
+    } catch {}
+
+    updateStarredUI();
+    return nowStarred;
+  }
+
+  function updateStarredUI() {
+    if (toolbarStarBtn && currentFile) {
+      const starred = isStarred(currentFile);
+      toolbarStarBtn.classList.toggle("starred", starred);
+      toolbarStarBtn.textContent = starred ? "⭐ Pinned" : "☆ Pin";
+    }
+
+    document.querySelectorAll(".card-star-btn").forEach((btn) => {
+      const p = btn.dataset.path;
+      const starred = isStarred({ path: p });
+      btn.classList.toggle("starred", starred);
+      btn.textContent = starred ? "⭐" : "☆";
+    });
+
+    renderPinnedSection();
+  }
+
+  function renderPinnedSection() {
+    if (!pinnedSection || !pinnedGrid) return;
+    if (currentFile || currentPath !== "") {
+      pinnedSection.classList.add("hidden");
+      return;
+    }
+
+    const list = getStarredFiles();
+    const repoKey = getRepoString(currentRepo);
+    const repoStarred = list.filter((f) => f.repoKey === repoKey);
+
+    if (repoStarred.length === 0) {
+      pinnedSection.classList.add("hidden");
+      return;
+    }
+
+    pinnedSection.classList.remove("hidden");
+    if (pinnedCount) pinnedCount.textContent = `${repoStarred.length} pinned`;
+    pinnedGrid.innerHTML = "";
+
+    repoStarred.forEach((item) => {
+      const card = document.createElement("div");
+      card.className = "pinned-card";
+      const folder = item.path.includes("/") ? item.path.substring(0, item.path.lastIndexOf("/")) : "Root";
+
+      card.innerHTML = `
+        <div class="pinned-card-main">
+          <span class="pinned-card-icon">${getIcon(item)}</span>
+          <div class="pinned-card-info">
+            <span class="pinned-card-name">${escapeHtml(item.name)}</span>
+            <span class="pinned-card-path">📁 ${escapeHtml(folder)}</span>
+          </div>
+        </div>
+        <button type="button" class="pinned-remove-btn" title="Unpin file">✕</button>
+      `;
+
+      card.querySelector(".pinned-card-main").addEventListener("click", () => {
+        openViewer(item);
+      });
+
+      card.querySelector(".pinned-remove-btn").addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleStar(item);
+      });
+
+      pinnedGrid.appendChild(card);
+    });
+  }
+
   // ── Recent Repositories Management ─────────────────────
   function getRecentRepos() {
     try {
@@ -482,7 +613,6 @@
         branch: repo.branch || "HEAD",
         timestamp: Date.now()
       });
-      // Keep up to 8 recent repos
       const trimmed = list.slice(0, 8);
       localStorage.setItem(RECENT_REPOS_KEY, JSON.stringify(trimmed));
       renderRecentReposList();
@@ -502,11 +632,10 @@
   function renderRecentReposList() {
     const list = getRecentRepos();
 
-    // 1. Render in Topbar Quick Switcher Dropdown
+    // 1. Topbar Quick Switcher Dropdown
     if (switcherList) {
       switcherList.innerHTML = "";
 
-      // Default repo item
       const defItem = document.createElement("div");
       defItem.className = `switcher-item ${isDefaultRepo() ? "active" : ""}`;
       defItem.innerHTML = `
@@ -556,7 +685,7 @@
       });
     }
 
-    // 2. Render in Developer Modal Recent Section
+    // 2. Developer Modal Recent Section
     if (devRecentSection && devRecentList) {
       if (list.length === 0) {
         devRecentSection.classList.add("hidden");
@@ -586,10 +715,8 @@
     const isDef = isDefaultRepo();
     const platInfo = PLATFORMS[currentRepo.platform] || { icon: "📁", name: "Git" };
 
-    // Update document title
     document.title = isDef ? "Study Portal" : `${currentRepo.name} – Study Portal`;
 
-    // Sidebar repo badge
     if (repoBadge) {
       if (isDef) {
         repoBadge.classList.add("hidden");
@@ -599,11 +726,9 @@
       }
     }
 
-    // Topbar switcher button
     if (switcherIcon) switcherIcon.textContent = platInfo.icon;
     if (switcherName) switcherName.textContent = isDef ? "TYBCA" : currentRepo.name;
 
-    // Refresh recent list highlight
     renderRecentReposList();
   }
 
@@ -659,14 +784,14 @@
   sidebarClose.addEventListener("click", closeSidebar);
   sidebarOverlay.addEventListener("click", closeSidebar);
 
-  // ── GitHub Recursive Tree (1 Request for entire repo) ───
+  // ── Multi-Platform Recursive Tree API (1 Request for entire repo) ──
   async function fetchRepoTree(repo) {
-    const treeKey = `${repo.platform}_${repo.host}_${repo.owner}_${repo.name}_${repo.branch || "HEAD"}`;
-    if (repoTreeCache[treeKey]) {
-      return repoTreeCache[treeKey];
-    }
+    const branch = repo.branch || "HEAD";
+    const treeKey = `${repo.platform}_${repo.host}_${repo.owner}_${repo.name}_${branch}`;
 
-    // Check sessionStorage
+    if (repoTreeCache[treeKey]) return repoTreeCache[treeKey];
+    if (inFlightTrees[treeKey]) return inFlightTrees[treeKey];
+
     const cacheKey = `studyportal_tree_${treeKey}`;
     const cached = sessionStorage.getItem(cacheKey);
     if (cached) {
@@ -676,53 +801,102 @@
           repoTreeCache[treeKey] = parsed;
           return parsed;
         }
-      } catch {}
-    }
-
-    // Only GitHub exposes the git/trees recursive API endpoint
-    if (repo.platform === "github" && repo.host === "github.com") {
-      try {
-        const branch = repo.branch || "HEAD";
-        const url = `https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          if (data && Array.isArray(data.tree) && !data.truncated) {
-            const branchName = repo.branch && repo.branch !== "HEAD" ? repo.branch : "HEAD";
-            const items = data.tree
-              .filter((it) => !it.path.split("/").some((seg) => seg.startsWith(".")))
-              .map((it) => {
-                const parts = it.path.split("/");
-                const name = parts[parts.length - 1];
-                const isDir = it.type === "tree";
-                return {
-                  name,
-                  path: it.path,
-                  type: isDir ? "dir" : "file",
-                  size: it.size || null,
-                  download_url: isDir ? null : `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branchName}/${encodeURI(it.path)}`
-                };
-              });
-
-            repoTreeCache[treeKey] = items;
-            try {
-              sessionStorage.setItem(cacheKey, JSON.stringify(items));
-            } catch {}
-            return items;
-          }
-        }
       } catch {
-        // Fall back to per-folder API
+        sessionStorage.removeItem(cacheKey);
       }
     }
 
-    return null;
+    inFlightTrees[treeKey] = (async () => {
+      try {
+        // 1. GitHub, Codeberg & Gitea (Git Trees API)
+        if (["github", "codeberg", "gitea"].includes(repo.platform)) {
+          const apiBase =
+            repo.platform === "github"
+              ? "https://api.github.com/repos"
+              : `https://${repo.host}/api/v1/repos`;
+
+          const url = `${apiBase}/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
+          const res = await fetch(url);
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.tree) && !data.truncated) {
+              const items = data.tree
+                .filter((it) => !it.path.split("/").some((seg) => seg.startsWith(".")))
+                .map((it) => {
+                  const parts = it.path.split("/");
+                  const name = parts[parts.length - 1];
+                  const isDir = it.type === "tree";
+                  const safePath = parts.map(encodeURIComponent).join("/");
+                  const rawUrl =
+                    repo.platform === "github"
+                      ? `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branch}/${safePath}`
+                      : `https://${repo.host}/${repo.owner}/${repo.name}/raw/branch/${branch}/${safePath}`;
+
+                  return {
+                    name,
+                    path: it.path,
+                    type: isDir ? "dir" : "file",
+                    size: it.size ?? null,
+                    download_url: isDir ? null : rawUrl
+                  };
+                });
+
+              repoTreeCache[treeKey] = items;
+              try { sessionStorage.setItem(cacheKey, JSON.stringify(items)); } catch {}
+              return items;
+            }
+          }
+        }
+
+        // 2. GitLab Recursive Tree
+        if (repo.platform === "gitlab") {
+          const host = repo.host || "gitlab.com";
+          const projectId = encodeURIComponent(`${repo.owner}/${repo.name}`);
+          const params = new URLSearchParams({ recursive: "true", per_page: "100" });
+          if (branch !== "HEAD") params.set("ref", branch);
+
+          const res = await fetch(`https://${host}/api/v4/projects/${projectId}/repository/tree?${params}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data.length < 100) {
+              const items = data
+                .filter((it) => !it.path.split("/").some((seg) => seg.startsWith(".")))
+                .map((it) => {
+                  const safePath = it.path.split("/").map(encodeURIComponent).join("/");
+                  return {
+                    name: it.name,
+                    path: it.path,
+                    type: it.type === "tree" ? "dir" : "file",
+                    size: null,
+                    download_url:
+                      it.type === "tree"
+                        ? null
+                        : `https://${host}/${repo.owner}/${repo.name}/-/raw/${branch}/${safePath}`
+                  };
+                });
+
+              repoTreeCache[treeKey] = items;
+              try { sessionStorage.setItem(cacheKey, JSON.stringify(items)); } catch {}
+              return items;
+            }
+          }
+        }
+      } catch {
+        // Fall back silently to per-folder adapter
+      } finally {
+        delete inFlightTrees[treeKey];
+      }
+      return null;
+    })();
+
+    return inFlightTrees[treeKey];
   }
 
   // ── API fetch with caching & tree fallback ──────────────
   async function fetchContents(path = "") {
-    // 1. Try to load from in-memory or sessionStorage recursive tree (costs 0 additional API requests)
-    const treeKey = `${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentRepo.branch || "HEAD"}`;
+    const branch = currentRepo.branch || "HEAD";
+    const treeKey = `${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${branch}`;
     let tree = repoTreeCache[treeKey];
     if (!tree) {
       tree = await fetchRepoTree(currentRepo);
@@ -736,7 +910,6 @@
       return tree.filter((it) => it.path.startsWith(prefix) && !it.path.slice(prefix.length).includes("/"));
     }
 
-    // 2. Fallback to standard per-folder adapter API
     const cacheKey = `${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${path}`;
     const cached = sessionStorage.getItem(cacheKey);
     if (cached) {
@@ -750,10 +923,8 @@
     const adapter = ADAPTERS[currentRepo.platform] || ADAPTERS.github;
     const items = await adapter.fetchContents(currentRepo, path);
 
-    // Hide hidden dotfiles (.gitignore, etc.)
     const cleaned = (items || []).filter((item) => !item.name.startsWith("."));
 
-    // Cache the directory listings
     if (Array.isArray(cleaned)) {
       try {
         sessionStorage.setItem(cacheKey, JSON.stringify(cleaned));
@@ -780,7 +951,6 @@
   function updateUrl({ path, file } = {}, replace = false) {
     const url = new URL(window.location.origin + window.location.pathname);
 
-    // Repo param
     if (!isDefaultRepo()) {
       url.searchParams.set("repo", getRepoString(currentRepo));
     }
@@ -810,21 +980,17 @@
       updateUrl({ path });
     }
 
-    // Persist last visited path for session restore (default repo only)
     if (isDefaultRepo()) {
       try { localStorage.setItem(LAST_PATH_KEY, path); } catch { /* quota */ }
     }
 
-    // Show loading
     hideAll();
     fileGrid.classList.remove("hidden");
     contentLoader.classList.remove("hidden");
     clearFileCards();
 
-    // Update breadcrumbs
     renderBreadcrumbs(path);
 
-    // Hide toolbar & viewers
     toolbar.classList.add("hidden");
     viewer.classList.add("hidden");
     codeViewer.classList.add("hidden");
@@ -835,7 +1001,6 @@
     try {
       const items = await fetchContents(path);
       currentItems = Array.isArray(items) ? items : [];
-      // Sort: dirs first, then alphabetical
       currentItems.sort((a, b) => {
         if (a.type === "dir" && b.type !== "dir") return -1;
         if (a.type !== "dir" && b.type === "dir") return 1;
@@ -843,6 +1008,7 @@
       });
 
       contentLoader.classList.add("hidden");
+      renderPinnedSection();
       renderFileGrid(currentItems);
       renderSidebarTree(currentItems);
     } catch (err) {
@@ -853,21 +1019,29 @@
 
   // ── Render helpers & Media Teardown ────────────────────
   function hideAll() {
-    // Media & iframe cleanup on every navigation path
     if (mediaVideo) {
-      mediaVideo.pause();
-      mediaVideo.removeAttribute("src");
-      mediaVideo.load();
+      try {
+        mediaVideo.pause?.();
+        mediaVideo.removeAttribute("src");
+        mediaVideo.load?.();
+      } catch {}
     }
     if (mediaAudio) {
-      mediaAudio.pause();
-      mediaAudio.removeAttribute("src");
-      mediaAudio.load();
+      try {
+        mediaAudio.pause?.();
+        mediaAudio.removeAttribute("src");
+        mediaAudio.load?.();
+      } catch {}
     }
     if (viewerFrame) {
       viewerFrame.src = "about:blank";
       viewerFrame.classList.add("hidden");
     }
+
+    if (pinnedSection) pinnedSection.classList.add("hidden");
+    if (folderReadmeSection) folderReadmeSection.classList.add("hidden");
+    if (markdownToc) markdownToc.classList.add("hidden");
+    if (mdTocToggle) mdTocToggle.classList.add("hidden");
 
     fileGrid.classList.add("hidden");
     viewer.classList.add("hidden");
@@ -891,6 +1065,7 @@
     if (items.length === 0) {
       fileGrid.classList.add("hidden");
       emptyState.classList.remove("hidden");
+      if (folderReadmeSection) folderReadmeSection.classList.add("hidden");
       return;
     }
 
@@ -909,12 +1084,16 @@
         meta = `<span class="search-path-badge">${escapeHtml(folder)}</span> ${meta}`;
       }
 
+      const isFile = item.type !== "dir";
+      const starred = isStarred(item);
+
       card.innerHTML = `
         <span class="file-card-icon">${getIcon(item)}</span>
         <div class="file-card-info">
           <div class="file-card-name">${escapeHtml(item.name)}</div>
           <div class="file-card-meta">${meta}</div>
         </div>
+        ${isFile ? `<button type="button" class="card-star-btn ${starred ? "starred" : ""}" data-path="${escapeHtml(item.path)}" title="Pin / star file">${starred ? "⭐" : "☆"}</button>` : ""}
         <span class="file-card-arrow">${item.type === "dir" ? "›" : ""}</span>
       `;
 
@@ -924,6 +1103,7 @@
         }
         handleItemClick(item);
       });
+
       card.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -934,8 +1114,41 @@
         }
       });
 
+      const starBtn = card.querySelector(".card-star-btn");
+      if (starBtn) {
+        starBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          toggleStar(item);
+        });
+      }
+
       fileGrid.appendChild(card);
     });
+
+    // Auto-render folder README.md if present (not during search)
+    if (!isSearchResult && !currentFile && folderReadmeSection && folderReadmeBody) {
+      const readmeItem = items.find((i) => i.type !== "dir" && i.name.toLowerCase() === "readme.md");
+      if (readmeItem && readmeItem.download_url) {
+        folderReadmeSection.classList.remove("hidden");
+        if (folderReadmeTitle) folderReadmeTitle.textContent = readmeItem.name;
+        folderReadmeBody.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span>Loading README…</span></div>';
+        fetch(readmeItem.download_url)
+          .then((r) => r.text())
+          .then((text) => {
+            const baseRawUrl = getBaseRawUrl(readmeItem.download_url);
+            const parsed = parseMarkdown(text, baseRawUrl);
+            folderReadmeBody.innerHTML = parsed.html;
+          })
+          .catch(() => {
+            folderReadmeSection.classList.add("hidden");
+          });
+      } else {
+        folderReadmeSection.classList.add("hidden");
+        folderReadmeBody.innerHTML = "";
+      }
+    } else if (folderReadmeSection) {
+      folderReadmeSection.classList.add("hidden");
+    }
   }
 
   function renderSidebarTree(items) {
@@ -1046,7 +1259,6 @@
     const e = (ext || "").toLowerCase();
     const escaped = escapeHtml(lineText);
 
-    // Single-pass regex prevents tokens from corrupting each other's HTML tags
     const tokenRegex = /(&quot;(?:\\&quot;|[^&]|&(?!quot;))*?&quot;|&#39;(?:\\&#39;|[^&]|&(?!#39;))*?&#39;|`[\s\S]*?`)|(\/\/.*$|#.*$|--.*$|&lt;!--.*$)|(&lt;\/?[a-zA-Z0-9\-]+)(?=&gt;|\s)|(\b(?:true|false|True|False|null|undefined|None|nil)\b)|(\b(?:function|def|class|import|from|export|default|return|if|else|elif|for|while|do|switch|case|break|continue|try|catch|except|finally|throw|raise|async|await|new|this|self|const|let|var|public|private|protected|static|void|int|float|double|boolean|bool|string|char|struct|enum|interface|type|package|namespace|using|fn|mut|SELECT|FROM|WHERE|INSERT|INTO|UPDATE|DELETE|JOIN|LEFT|RIGHT|INNER|GROUP|BY|ORDER|HAVING|LIMIT|CREATE|TABLE|DATABASE|DROP|ALTER|AS|AND|OR|NOT|IN|IS|NULL)\b)|(\b\d+(?:\.\d+)?\b)/g;
 
     return escaped.replace(tokenRegex, (match, str, comment, tag, bool, kw, num) => {
@@ -1067,7 +1279,7 @@
     });
   }
 
-  // ── Zero-dependency Markdown Parser (XSS-safe & nested) ─
+  // ── Zero-dependency Markdown Parser (XSS-safe, code-highlighted & TOC) ─
   function isTableDelimiter(line) {
     const t = (line || "").trim();
     return /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(t);
@@ -1081,10 +1293,11 @@
   }
 
   function parseMarkdown(md, baseRawUrl = "") {
-    if (!md) return "";
+    if (!md) return { html: "", headings: [] };
 
     const lines = md.split(/\r\n|\r|\n/);
     const htmlParts = [];
+    const headings = [];
     let inCodeBlock = false;
     let codeBlockLang = "";
     let codeBlockContent = [];
@@ -1146,7 +1359,7 @@
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Code blocks
+      // Code blocks with syntax highlighting
       if (line.trim().startsWith("```")) {
         if (!inCodeBlock) {
           flushAllLists();
@@ -1156,8 +1369,10 @@
           codeBlockContent = [];
         } else {
           inCodeBlock = false;
-          const codeText = codeBlockContent.join("\n");
-          htmlParts.push(`<pre><code class="lang-${escapeHtml(codeBlockLang)}">${escapeHtml(codeText)}</code></pre>`);
+          const highlighted = codeBlockContent
+            .map((codeLine) => highlightSyntax(codeLine, codeBlockLang))
+            .join("\n");
+          htmlParts.push(`<pre><code class="lang-${escapeHtml(codeBlockLang)}">${highlighted}</code></pre>`);
         }
         continue;
       }
@@ -1182,13 +1397,16 @@
         continue;
       }
 
-      // Headers (# H1 to ###### H6)
+      // Headers with anchor IDs
       const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
       if (headerMatch) {
         flushAllLists();
         flushTable();
         const level = headerMatch[1].length;
-        htmlParts.push(`<h${level}>${formatInline(headerMatch[2])}</h${level}>`);
+        const rawHeaderText = headerMatch[2].trim();
+        const slug = rawHeaderText.toLowerCase().replace(/<[^>]+>/g, "").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-") || `heading-${i}`;
+        headings.push({ level, text: rawHeaderText, slug });
+        htmlParts.push(`<h${level} id="${slug}"><a class="header-anchor" href="#${slug}" title="Direct link">#</a>${formatInline(rawHeaderText)}</h${level}>`);
         continue;
       }
 
@@ -1201,7 +1419,7 @@
         continue;
       }
 
-      // Tables (supports with or without outer pipes)
+      // Tables
       if (trimmed.includes("|")) {
         if (!inTable) {
           const nextLine = i + 1 < lines.length ? lines[i + 1].trim() : "";
@@ -1222,7 +1440,7 @@
         flushTable();
       }
 
-      // Lists (Nested ul/ol & task lists)
+      // Lists
       const ulMatch = line.match(/^(\s*)[-*]\s+(.*)$/);
       const olMatch = line.match(/^(\s*)\d+\.\s+(.*)$/);
       if (ulMatch || olMatch) {
@@ -1269,7 +1487,90 @@
 
     flushAllLists();
     flushTable();
-    return htmlParts.join("\n");
+    return { html: htmlParts.join("\n"), headings };
+  }
+
+  // ── Markdown TOC Setup ──────────────────────────────────
+  function setupMarkdownToc(headings) {
+    if (!mdTocToggle || !markdownToc || !tocList) return;
+
+    if (!headings || headings.length < 3) {
+      mdTocToggle.classList.add("hidden");
+      markdownToc.classList.add("hidden");
+      return;
+    }
+
+    mdTocToggle.classList.remove("hidden");
+    tocList.innerHTML = "";
+
+    headings.forEach((h) => {
+      const a = document.createElement("a");
+      a.href = `#${h.slug}`;
+      a.className = `toc-link toc-l${h.level}`;
+      a.textContent = h.text;
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        const target = document.getElementById(h.slug);
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+          history.replaceState(null, "", `#${h.slug}`);
+        }
+      });
+      tocList.appendChild(a);
+    });
+  }
+
+  if (mdTocToggle) {
+    mdTocToggle.addEventListener("click", () => {
+      if (markdownToc) markdownToc.classList.toggle("hidden");
+    });
+  }
+
+  if (tocCloseBtn) {
+    tocCloseBtn.addEventListener("click", () => {
+      if (markdownToc) markdownToc.classList.add("hidden");
+    });
+  }
+
+  // ── Previous / Next File Navigation ─────────────────────
+  function updateFileNavButtons(item) {
+    if (!prevFileBtn || !nextFileBtn) return;
+    const viewableSiblings = currentItems.filter((i) => i.type !== "dir" && isViewable(i.name));
+    const currentIndex = viewableSiblings.findIndex((i) => i.path === item.path);
+
+    if (currentIndex > 0) {
+      prevFileBtn.disabled = false;
+      prevFileBtn.title = `Previous: ${viewableSiblings[currentIndex - 1].name} (Arrow Left)`;
+    } else {
+      prevFileBtn.disabled = true;
+      prevFileBtn.title = "No previous file";
+    }
+
+    if (currentIndex !== -1 && currentIndex < viewableSiblings.length - 1) {
+      nextFileBtn.disabled = false;
+      nextFileBtn.title = `Next: ${viewableSiblings[currentIndex + 1].name} (Arrow Right)`;
+    } else {
+      nextFileBtn.disabled = true;
+      nextFileBtn.title = "No next file";
+    }
+  }
+
+  if (prevFileBtn) {
+    prevFileBtn.addEventListener("click", () => {
+      if (!currentFile) return;
+      const viewableSiblings = currentItems.filter((i) => i.type !== "dir" && isViewable(i.name));
+      const idx = viewableSiblings.findIndex((i) => i.path === currentFile.path);
+      if (idx > 0) openViewer(viewableSiblings[idx - 1]);
+    });
+  }
+
+  if (nextFileBtn) {
+    nextFileBtn.addEventListener("click", () => {
+      if (!currentFile) return;
+      const viewableSiblings = currentItems.filter((i) => i.type !== "dir" && isViewable(i.name));
+      const idx = viewableSiblings.findIndex((i) => i.path === currentFile.path);
+      if (idx !== -1 && idx < viewableSiblings.length - 1) openViewer(viewableSiblings[idx + 1]);
+    });
   }
 
   // ── Open Viewer Master Controller ──────────────────────
@@ -1282,6 +1583,9 @@
     toolbarFilename.textContent = item.name;
     toolbarFilename.title = item.name;
     downloadBtn.href = item.download_url || "#";
+
+    updateFileNavButtons(item);
+    updateStarredUI();
 
     if (updateHistory) {
       updateUrl({ file: item.path });
@@ -1308,9 +1612,11 @@
         const readMin = Math.max(1, Math.ceil(wordCount / 200));
         mdReadingTime.textContent = `${readMin} min read • ${wordCount} words`;
 
-        // Derive base raw URL directly from download_url for all Git platforms
         currentBaseRawUrl = getBaseRawUrl(item.download_url);
-        markdownBody.innerHTML = parseMarkdown(text, currentBaseRawUrl);
+        const parsed = parseMarkdown(text, currentBaseRawUrl);
+        markdownBody.innerHTML = parsed.html;
+        setupMarkdownToc(parsed.headings);
+
         isMarkdownRaw = false;
         mdModeToggle.textContent = "💻 Raw Code";
       } catch (err) {
@@ -1534,7 +1840,6 @@
       applyImageTransform();
     }, { passive: false });
 
-    // Pointer events support mouse, touch finger, and pen stylus seamlessly
     imageStage.addEventListener("pointerdown", (e) => {
       if (e.button !== undefined && e.button !== 0) return;
       isPanning = true;
@@ -1571,9 +1876,13 @@
       if (isMarkdownRaw) {
         mdModeToggle.textContent = "📖 Rendered";
         markdownBody.innerHTML = `<pre><code>${escapeHtml(currentRawText)}</code></pre>`;
+        if (markdownToc) markdownToc.classList.add("hidden");
+        if (mdTocToggle) mdTocToggle.classList.add("hidden");
       } else {
         mdModeToggle.textContent = "💻 Raw Code";
-        markdownBody.innerHTML = parseMarkdown(currentRawText, currentBaseRawUrl);
+        const parsed = parseMarkdown(currentRawText, currentBaseRawUrl);
+        markdownBody.innerHTML = parsed.html;
+        setupMarkdownToc(parsed.headings);
       }
     });
   }
@@ -1617,6 +1926,14 @@
           showToast("Could not copy code to clipboard.");
         }
       });
+    });
+  }
+
+  // ── Pin / Star toolbar button ──────────────────────────
+  if (toolbarStarBtn) {
+    toolbarStarBtn.addEventListener("click", () => {
+      if (!currentFile) return;
+      toggleStar(currentFile);
     });
   }
 
@@ -1676,6 +1993,16 @@
     }
   });
 
+  // ── Search & Shortcut Click ────────────────────────────
+  if (searchShortcut) {
+    searchShortcut.addEventListener("click", () => {
+      if (searchInput) {
+        searchInput.focus();
+        searchInput.select();
+      }
+    });
+  }
+
   // ── Instant Global Search across all Subfolders ────────
   searchInput.addEventListener("input", () => {
     const query = searchInput.value.toLowerCase().trim();
@@ -1694,21 +2021,79 @@
     if (currentFile) return;
 
     if (!query) {
+      renderPinnedSection();
       renderFileGrid(currentItems, false);
       return;
     }
 
+    // Hide pinned resources during search
+    if (pinnedSection) pinnedSection.classList.add("hidden");
+
     // Try global search across cached repo tree
-    const treeKey = `${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentRepo.branch || "HEAD"}`;
+    const branch = currentRepo.branch || "HEAD";
+    const treeKey = `${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${branch}`;
     const tree = repoTreeCache[treeKey];
 
     if (tree && Array.isArray(tree)) {
       const matches = tree.filter((it) => it.name.toLowerCase().includes(query) || it.path.toLowerCase().includes(query));
       renderFileGrid(matches, true);
     } else {
-      // Local folder filter fallback
       const filtered = currentItems.filter((it) => it.name.toLowerCase().includes(query));
       renderFileGrid(filtered, false);
+    }
+  });
+
+  // ── Keyboard Shortcuts (/, Ctrl+K, Escape, Arrows) ─────
+  window.addEventListener("keydown", (e) => {
+    const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
+
+    // '/' or 'Ctrl+K' / 'Cmd+K' focuses search
+    if ((e.key === "/" && !isInput) || ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K"))) {
+      e.preventDefault();
+      if (searchInput) {
+        searchInput.focus();
+        searchInput.select();
+      }
+      return;
+    }
+
+    // Escape clears search / closes modals / goes back
+    if (e.key === "Escape") {
+      if (document.activeElement === searchInput) {
+        searchInput.blur();
+        if (searchInput.value) {
+          searchInput.value = "";
+          searchInput.dispatchEvent(new Event("input"));
+        }
+        return;
+      }
+      if (devOverlay && !devOverlay.classList.contains("hidden")) {
+        closeDevModal();
+        return;
+      }
+      if (repoSwitcherDropdown && !repoSwitcherDropdown.classList.contains("hidden")) {
+        closeRepoSwitcher();
+        return;
+      }
+      if (markdownToc && !markdownToc.classList.contains("hidden")) {
+        markdownToc.classList.add("hidden");
+        return;
+      }
+      if (currentFile && backBtn) {
+        backBtn.click();
+        return;
+      }
+    }
+
+    // Arrow navigation when viewing files
+    if (currentFile && !isInput) {
+      if (e.key === "ArrowLeft" && prevFileBtn && !prevFileBtn.disabled) {
+        e.preventDefault();
+        prevFileBtn.click();
+      } else if (e.key === "ArrowRight" && nextFileBtn && !nextFileBtn.disabled) {
+        e.preventDefault();
+        nextFileBtn.click();
+      }
     }
   });
 
@@ -1720,6 +2105,10 @@
   }
 
   retryBtn.addEventListener("click", () => {
+    const branch = currentRepo.branch || "HEAD";
+    const treeKey = `${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${branch}`;
+    delete repoTreeCache[treeKey];
+    sessionStorage.removeItem(`studyportal_tree_${treeKey}`);
     sessionStorage.removeItem(`${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentPath}`);
     navigateTo(currentPath);
   });
@@ -1878,7 +2267,6 @@
     updateRepoUI();
     const platInfo = PLATFORMS[parsedRepo.platform] || { icon: "📁" };
     showToast(`Loaded ${platInfo.icon} ${parsedRepo.owner}/${parsedRepo.name}`);
-    // Pre-fetch tree in background
     fetchRepoTree(parsedRepo).catch(() => {});
     navigateTo("");
   }
@@ -2017,6 +2405,7 @@
           if (a.type !== "dir" && b.type === "dir") return 1;
           return a.name.localeCompare(b.name);
         });
+        renderPinnedSection();
         renderFileGrid(currentItems);
         renderSidebarTree(currentItems);
 
