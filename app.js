@@ -717,7 +717,7 @@
     return getOfflineMeta().some((entry) => entry.download_url === item.download_url);
   }
 
-  async function recordFileOffline(item, byteSize = null) {
+  function recordFileOffline(item, byteSize = null) {
     if (!item || !item.download_url) return;
     const list = getOfflineMeta().filter((e) => e.download_url !== item.download_url);
     list.unshift({
@@ -744,7 +744,7 @@
       // Skip caching single files larger than 15 MB to protect mobile storage quota
       if (blob.size > 15 * 1024 * 1024) return false;
       await cache.put(item.download_url, clone);
-      await recordFileOffline(item, blob.size);
+      recordFileOffline(item, blob.size);
       return true;
     } catch {
       return false;
@@ -2052,6 +2052,7 @@
       viewerLoading.classList.remove("loaded");
 
       resetImageZoom();
+      mediaImage.setAttribute("crossorigin", "anonymous");
       mediaImage.src = item.download_url;
       imageInfo.textContent = "Loading image…";
 
@@ -2065,6 +2066,11 @@
       };
 
       mediaImage.onerror = () => {
+        if (mediaImage.hasAttribute("crossorigin")) {
+          mediaImage.removeAttribute("crossorigin");
+          mediaImage.src = item.download_url;
+          return;
+        }
         viewerLoading.classList.add("loaded");
         imageInfo.textContent = "Error loading image";
       };
