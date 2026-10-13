@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Study Portal</title>
-  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="style.css?v=6" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -77,6 +77,9 @@
             </div>
           </div>
         </div>
+        <button type="button" class="topbar-btn" id="homeBtn" title="Open Platform Home Launchpad">
+          🏠
+        </button>
         <button type="button" class="topbar-btn" id="topbarShareBtn" title="Copy shareable link to current view">
           🔗
         </button>
@@ -103,6 +106,58 @@
 
     <!-- Content area: file listing OR document viewer -->
     <section class="content" id="content">
+      <!-- Gemini / Grok Style Platform Home Screen -->
+      <div class="home-screen hidden" id="homeScreen">
+        <div class="home-hero">
+          <div class="home-glow"></div>
+          <span class="home-pill">✦ Universal Git Study Platform</span>
+          <h1 class="home-title">What repository do you want to explore?</h1>
+          <p class="home-subtitle">
+            Paste any public GitHub, GitLab, Codeberg, Gitea, or Bitbucket repository link to browse notes, slides, code, and media.
+          </p>
+
+          <!-- Omnibox Prompt Bar -->
+          <form class="home-omnibox" id="homeOmniboxForm">
+            <span class="home-omnibox-icon">🔗</span>
+            <input
+              type="text"
+              id="homeRepoInput"
+              class="home-omnibox-input"
+              placeholder="Paste repo URL or owner/repo (e.g. Satya-Siba-Nayak/TYBCA)…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button type="submit" class="home-omnibox-submit">
+              Explore <span>→</span>
+            </button>
+          </form>
+
+          <!-- Quick Platform & Featured Chips -->
+          <div class="home-chips" id="homeChips">
+            <button type="button" class="home-chip home-chip-featured" data-repo="Satya-Siba-Nayak/TYBCA">
+              🎓 <strong>TYBCA Study Portal</strong> <span>(Default)</span>
+            </button>
+            <button type="button" class="home-chip" data-example="https://github.com/ossu/computer-science">
+              🐙 ossu/computer-science
+            </button>
+            <button type="button" class="home-chip" data-example="https://gitlab.com/gitlab-org/gitlab-foss">
+              🦊 GitLab Repo
+            </button>
+            <button type="button" class="home-chip" data-example="https://codeberg.org/forgejo/forgejo">
+              🏔️ Codeberg Repo
+            </button>
+          </div>
+
+          <!-- Saved / Recent Workspaces Grid -->
+          <div class="home-recent-wrap hidden" id="homeRecentWrap">
+            <div class="home-recent-header">
+              <span>Recently Opened Workspaces</span>
+            </div>
+            <div class="home-recent-grid" id="homeRecentGrid"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Pinned / Starred Resources -->
       <div class="pinned-section hidden" id="pinnedSection">
         <div class="pinned-header">
@@ -316,6 +371,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

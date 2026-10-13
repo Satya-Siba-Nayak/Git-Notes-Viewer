@@ -4,8 +4,8 @@
    for instantaneous updates on deployment.
    ========================================================= */
 
-const CACHE_NAME = "studyportal-v5";
-const APP_SHELL = ["/", "/index.html", "/style.css?v=5", "/app.js?v=5", "/manifest.json"];
+const CACHE_NAME = "studyportal-v6";
+const APP_SHELL = ["/", "/index.html", "/style.css?v=6", "/app.js?v=6", "/manifest.json"];
 
 // Install – cache app shell
 self.addEventListener("install", (e) => {

@@ -224,6 +224,13 @@
   const fullscreenBtn = document.getElementById("fullscreenBtn");
   const shareBtn = document.getElementById("shareBtn");
   const topbarShareBtn = document.getElementById("topbarShareBtn");
+  const homeBtn = document.getElementById("homeBtn");
+  const homeScreen = document.getElementById("homeScreen");
+  const homeOmniboxForm = document.getElementById("homeOmniboxForm");
+  const homeRepoInput = document.getElementById("homeRepoInput");
+  const homeChips = document.getElementById("homeChips");
+  const homeRecentWrap = document.getElementById("homeRecentWrap");
+  const homeRecentGrid = document.getElementById("homeRecentGrid");
   const repoSwitcherBtn = document.getElementById("repoSwitcherBtn");
   const repoSwitcherDropdown = document.getElementById("repoSwitcherDropdown");
   const switcherIcon = document.getElementById("switcherIcon");
@@ -950,10 +957,7 @@
   // ── URL & Deep Linking ──────────────────────────────────
   function updateUrl({ path, file } = {}, replace = false) {
     const url = new URL(window.location.origin + window.location.pathname);
-
-    if (!isDefaultRepo()) {
-      url.searchParams.set("repo", getRepoString(currentRepo));
-    }
+    url.searchParams.set("repo", getRepoString(currentRepo));
 
     if (file) {
       url.searchParams.set("file", file);
@@ -964,10 +968,8 @@
     const newQuery = url.search ? url.search : window.location.pathname;
     if (replace) {
       history.replaceState({ repo: currentRepo, path, file }, "", newQuery);
-    } else {
-      if (window.location.search !== (url.search || "")) {
-        history.pushState({ repo: currentRepo, path, file }, "", newQuery);
-      }
+    } else if (window.location.search !== (url.search || "")) {
+      history.pushState({ repo: currentRepo, path, file }, "", newQuery);
     }
   }
 
@@ -1038,6 +1040,8 @@
       viewerFrame.classList.add("hidden");
     }
 
+    document.body.classList.remove("home-mode");
+    if (homeScreen) homeScreen.classList.add("hidden");
     if (pinnedSection) pinnedSection.classList.add("hidden");
     if (folderReadmeSection) folderReadmeSection.classList.add("hidden");
     if (markdownToc) markdownToc.classList.add("hidden");
@@ -2381,7 +2385,12 @@
     const params = new URLSearchParams(window.location.search);
     const repoParam = params.get("repo");
     const fileParam = params.get("file");
-    const pathParam = params.get("path") || "";
+    const pathParam = params.get("path");
+
+    if (!repoParam && !fileParam && pathParam === null) {
+      openHomeScreen(false);
+      return;
+    }
 
     if (repoParam) {
       const parsed = parseRepoUrl(repoParam);
@@ -2411,8 +2420,103 @@
     if (currentFile) {
       currentFile = null;
     }
-    navigateTo(pathParam, false);
+    navigateTo(pathParam || "", false);
   });
+
+  // ── Platform Home Screen (Gemini / Grok Launchpad) ──────
+  function renderHomeRecentRepos() {
+    if (!homeRecentWrap || !homeRecentGrid) return;
+    const list = getRecentRepos();
+    if (list.length === 0) {
+      homeRecentWrap.classList.add("hidden");
+      return;
+    }
+    homeRecentWrap.classList.remove("hidden");
+    homeRecentGrid.innerHTML = "";
+
+    list.forEach((repo) => {
+      const platInfo = PLATFORMS[repo.platform] || { icon: "📁" };
+      const card = document.createElement("div");
+      card.className = "home-recent-card";
+      card.innerHTML = `
+        <div class="switcher-item-main">
+          <span class="switcher-item-icon">${platInfo.icon}</span>
+          <div class="switcher-item-info">
+            <span class="switcher-item-name">${escapeHtml(repo.name)}</span>
+            <span class="switcher-item-sub">${escapeHtml(repo.owner)} • ${escapeHtml(repo.host)}</span>
+          </div>
+        </div>
+        <button type="button" class="switcher-item-remove" title="Remove">✕</button>
+      `;
+
+      card.querySelector(".switcher-item-main").addEventListener("click", () => {
+        loadCustomRepo(repo);
+      });
+
+      card.querySelector(".switcher-item-remove").addEventListener("click", (e) => {
+        e.stopPropagation();
+        removeRecentRepo(repo.host, repo.owner, repo.name);
+        renderHomeRecentRepos();
+      });
+
+      homeRecentGrid.appendChild(card);
+    });
+  }
+
+  function openHomeScreen(pushUrl = true) {
+    currentFile = null;
+    currentPath = "";
+    hideAll();
+    toolbar.classList.add("hidden");
+    contentLoader.classList.add("hidden");
+    document.body.classList.add("home-mode");
+
+    if (homeScreen) homeScreen.classList.remove("hidden");
+    renderHomeRecentRepos();
+
+    breadcrumbs.innerHTML = `<span class="crumb active">✦ Platform Home</span>`;
+
+    if (pushUrl && window.location.search !== "") {
+      history.pushState({ home: true }, "", window.location.pathname);
+    }
+
+    setTimeout(() => {
+      if (homeRepoInput) homeRepoInput.focus();
+    }, 50);
+  }
+
+  if (homeBtn) {
+    homeBtn.addEventListener("click", () => openHomeScreen(true));
+  }
+
+  if (homeOmniboxForm) {
+    homeOmniboxForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const val = (homeRepoInput.value || "").trim();
+      if (!val) return;
+      const parsed = parseRepoUrl(val);
+      if (!parsed) {
+        showToast("Invalid repository link. Try owner/repo or a full Git URL.");
+        return;
+      }
+      homeRepoInput.value = "";
+      loadCustomRepo(parsed);
+    });
+  }
+
+  if (homeChips) {
+    homeChips.addEventListener("click", (e) => {
+      const chip = e.target.closest(".home-chip");
+      if (!chip) return;
+      const directRepo = chip.dataset.repo;
+      const exampleUrl = chip.dataset.example;
+      const target = directRepo || exampleUrl;
+      if (target) {
+        const parsed = parseRepoUrl(target);
+        if (parsed) loadCustomRepo(parsed);
+      }
+    });
+  }
 
   // ── Boot with Deep Link Routing ────────────────────────
   async function boot() {
@@ -2422,6 +2526,12 @@
     const repoParam = params.get("repo");
     const fileParam = params.get("file");
     const pathParam = params.get("path");
+
+    // If no repo, path, or file is specified in the URL, launch the Gemini/Grok Home Screen
+    if (!repoParam && !fileParam && pathParam === null) {
+      openHomeScreen(false);
+      return;
+    }
 
     // 1. Repo deep link
     if (repoParam) {
