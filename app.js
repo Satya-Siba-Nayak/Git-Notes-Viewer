@@ -20,6 +20,8 @@
   const LAST_PATH_KEY = "studyportal_lastpath";
   const RECENT_REPOS_KEY = "studyportal_recent_repos";
   const STARRED_KEY = "studyportal_starred";
+  const OFFLINE_CACHE_NAME = "studyportal-data-v7";
+  const OFFLINE_META_KEY = "studyportal_offline_files";
 
   const PLATFORMS = {
     github: { name: "GitHub", icon: "🐙", host: "github.com" },
@@ -224,6 +226,17 @@
   const fullscreenBtn = document.getElementById("fullscreenBtn");
   const shareBtn = document.getElementById("shareBtn");
   const topbarShareBtn = document.getElementById("topbarShareBtn");
+  const saveOfflineBtn = document.getElementById("saveOfflineBtn");
+  const saveOfflineIcon = document.getElementById("saveOfflineIcon");
+  const saveOfflineText = document.getElementById("saveOfflineText");
+  const offlineLibBtn = document.getElementById("offlineLibBtn");
+  const offlineCountBadge = document.getElementById("offlineCountBadge");
+  const offlineOverlay = document.getElementById("offlineOverlay");
+  const offlineStorageSummary = document.getElementById("offlineStorageSummary");
+  const offlineSavedList = document.getElementById("offlineSavedList");
+  const offlineCloseBtn = document.getElementById("offlineCloseBtn");
+  const offlineDoneBtn = document.getElementById("offlineDoneBtn");
+  const offlineClearAllBtn = document.getElementById("offlineClearAllBtn");
   const homeBtn = document.getElementById("homeBtn");
   const homeScreen = document.getElementById("homeScreen");
   const homeOmniboxForm = document.getElementById("homeOmniboxForm");
@@ -313,6 +326,7 @@
   let currentDocEngine = "google"; // "google" | "office" | "native"
   let isCodeWrapped = false;
   let isMarkdownRaw = false;
+  let activeFetchController = null;
 
   // Zoom & Pan state for image preview
   let zoomScale = 1;
@@ -351,10 +365,16 @@
   const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico"];
   const VIDEO_EXTS = ["mp4", "webm", "ogg", "mov", "mkv"];
   const AUDIO_EXTS = ["mp3", "wav", "ogg", "m4a", "aac", "flac"];
+  const BINARY_EXTS = ["class", "jar", "war", "exe", "dll", "so", "o", "obj", "out", "pyc", "pyd", "wasm", "bin"];
 
   // ── Helpers ─────────────────────────────────────────────
   function getFileExt(name) {
-    return (name.split(".").pop() || "").toLowerCase();
+    const idx = name.lastIndexOf(".");
+    return idx > 0 ? name.slice(idx + 1).toLowerCase() : "";
+  }
+
+  function isBinaryInspectable(name) {
+    return BINARY_EXTS.includes(getFileExt(name));
   }
 
   function isCodeOrText(name) {
@@ -385,7 +405,15 @@
   }
 
   function isViewable(name) {
-    return isDocument(name) || isMarkdown(name) || isCodeOrText(name) || isImage(name) || isVideo(name) || isAudio(name);
+    return (
+      isDocument(name) ||
+      isMarkdown(name) ||
+      isCodeOrText(name) ||
+      isImage(name) ||
+      isVideo(name) ||
+      isAudio(name) ||
+      isBinaryInspectable(name)
+    );
   }
 
   function getIcon(item) {
@@ -400,9 +428,81 @@
     if (AUDIO_EXTS.includes(ext)) return "🎵";
     if (MD_EXTS.includes(ext)) return "📖";
     if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "📦";
+    if (ext === "class" || ext === "jar") return "☕";
+    if (BINARY_EXTS.includes(ext)) return "⚙️";
     if (["py", "js", "ts", "html", "css", "java", "c", "cpp", "cs", "sql", "sh", "rs", "go"].includes(ext)) return "💻";
     if (["txt", "log", "json", "yaml", "yml"].includes(ext)) return "📄";
     return "📄";
+  }
+
+  // ── Pure Vanilla JS Java .class & Binary Inspector ──────
+  function parseJavaClassBuffer(buffer) {
+    const view = new DataView(buffer);
+    if (buffer.byteLength < 10 || view.getUint32(0, false) !== 0xCAFEBABE) {
+      return { valid: false };
+    }
+    const minor = view.getUint16(4, false);
+    const major = view.getUint16(6, false);
+    const jdkMap = {
+      45: "JDK 1.1", 46: "JDK 1.2", 47: "JDK 1.3", 48: "JDK 1.4",
+      49: "Java SE 5", 50: "Java SE 6", 51: "Java SE 7", 52: "Java SE 8",
+      55: "Java SE 11", 61: "Java SE 17", 65: "Java SE 21", 67: "Java SE 23", 68: "Java SE 24", 69: "Java SE 25"
+    };
+    const jdkVersion = jdkMap[major] || `Java Major ${major} (Java ${major - 44})`;
+
+    // Parse Constant Pool UTF-8 strings (Tag 1)
+    const cpCount = view.getUint16(8, false);
+    let offset = 10;
+    const utf8Strings = [];
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+
+    try {
+      for (let i = 1; i < cpCount && offset < buffer.byteLength; i++) {
+        const tag = view.getUint8(offset++);
+        if (tag === 1) { // CONSTANT_Utf8
+          const len = view.getUint16(offset, false);
+          offset += 2;
+          const str = decoder.decode(new Uint8Array(buffer, offset, len));
+          if (str && /^[\x20-\x7E]+$/.test(str)) utf8Strings.push(str);
+          offset += len;
+        } else if (tag === 7 || tag === 8 || tag === 16 || tag === 19 || tag === 20) {
+          offset += 2;
+        } else if (tag === 15) {
+          offset += 3;
+        } else if ([3, 4, 9, 10, 11, 12, 17, 18].includes(tag)) {
+          offset += 4;
+        } else if (tag === 5 || tag === 6) {
+          offset += 8;
+          i++; // 8-byte constants take two pool slots
+        } else {
+          break;
+        }
+      }
+    } catch {}
+
+    return {
+      valid: true,
+      majorVersion: major,
+      minorVersion: minor,
+      jdkVersion,
+      constantPoolCount: cpCount,
+      constantStrings: utf8Strings
+    };
+  }
+
+  function formatHexDump(buffer, maxBytes = 2048) {
+    const bytes = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, maxBytes));
+    const lines = [];
+    for (let i = 0; i < bytes.length; i += 16) {
+      const slice = bytes.subarray(i, i + 16);
+      const hex = Array.from(slice).map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ").padEnd(47, " ");
+      const ascii = Array.from(slice).map((b) => (b >= 32 && b <= 126 ? String.fromCharCode(b) : ".")).join("");
+      lines.push(`${i.toString(16).padStart(6, "0")}  ${hex}  |${ascii}|`);
+    }
+    if (buffer.byteLength > maxBytes) {
+      lines.push(`... (${formatSize(buffer.byteLength - maxBytes)} more binary data omitted)`);
+    }
+    return lines.join("\n");
   }
 
   function formatSize(bytes) {
@@ -591,6 +691,238 @@
       });
 
       pinnedGrid.appendChild(card);
+    });
+  }
+
+  // ── Offline Caching & Saved Library Manager ─────────────
+  function getOfflineMeta() {
+    try {
+      const raw = localStorage.getItem(OFFLINE_META_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function setOfflineMeta(list) {
+    try {
+      localStorage.setItem(OFFLINE_META_KEY, JSON.stringify(list));
+    } catch {}
+    updateOfflineUI();
+  }
+
+  function isFileSavedOffline(item) {
+    if (!item || !item.download_url) return false;
+    return getOfflineMeta().some((entry) => entry.download_url === item.download_url);
+  }
+
+  async function recordFileOffline(item, byteSize = null) {
+    if (!item || !item.download_url) return;
+    const list = getOfflineMeta().filter((e) => e.download_url !== item.download_url);
+    list.unshift({
+      repo: { ...currentRepo },
+      repoLabel: `${currentRepo.owner}/${currentRepo.name}`,
+      name: item.name,
+      path: item.path,
+      type: item.type || "file",
+      size: byteSize ?? item.size ?? 0,
+      download_url: item.download_url,
+      savedAt: Date.now()
+    });
+    setOfflineMeta(list.slice(0, 150));
+  }
+
+  async function saveFileToOfflineCache(item) {
+    if (!item || !item.download_url || !("caches" in window)) return false;
+    try {
+      const cache = await caches.open(OFFLINE_CACHE_NAME);
+      const res = await fetch(item.download_url);
+      if (!res.ok) return false;
+      const clone = res.clone();
+      const blob = await res.blob();
+      // Skip caching single files larger than 15 MB to protect mobile storage quota
+      if (blob.size > 15 * 1024 * 1024) return false;
+      await cache.put(item.download_url, clone);
+      await recordFileOffline(item, blob.size);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function saveCurrentViewOffline() {
+    if (!("caches" in window)) {
+      showToast("Offline caching is not supported in this browser.");
+      return;
+    }
+
+    // 1. If viewing a single file, cache that file
+    if (currentFile) {
+      saveOfflineBtn.disabled = true;
+      saveOfflineText.textContent = "Saving…";
+      const ok = await saveFileToOfflineCache(currentFile);
+      saveOfflineBtn.disabled = false;
+      updateOfflineUI();
+      showToast(ok ? `✅ Saved "${currentFile.name}" for offline use!` : "⚠️ Could not cache this file.");
+      return;
+    }
+
+    // 2. If viewing a folder, cache all viewable files in the current folder (< 10 MB each)
+    const filesToSave = currentItems.filter(
+      (i) => i.type !== "dir" && i.download_url && (!i.size || i.size < 10 * 1024 * 1024)
+    );
+
+    if (filesToSave.length === 0) {
+      showToast("No cacheable files found in this folder.");
+      return;
+    }
+
+    saveOfflineBtn.disabled = true;
+    let savedCount = 0;
+
+    for (let i = 0; i < filesToSave.length; i++) {
+      saveOfflineIcon.textContent = "⏳";
+      saveOfflineText.textContent = `Saving ${i + 1}/${filesToSave.length}…`;
+      const ok = await saveFileToOfflineCache(filesToSave[i]);
+      if (ok) savedCount++;
+    }
+
+    saveOfflineBtn.disabled = false;
+    updateOfflineUI();
+    // Re-render cards so green "✓ Offline" badges appear immediately
+    if (!currentFile && !document.body.classList.contains("home-mode")) {
+      renderFileGrid(currentItems, false);
+    }
+    showToast(`✅ Saved ${savedCount} of ${filesToSave.length} files for offline access!`, 3000);
+  }
+
+  function updateOfflineUI() {
+    const list = getOfflineMeta();
+
+    // Update topbar counter badge
+    if (offlineCountBadge) {
+      if (list.length > 0) {
+        offlineCountBadge.textContent = list.length;
+        offlineCountBadge.classList.remove("hidden");
+      } else {
+        offlineCountBadge.classList.add("hidden");
+      }
+    }
+
+    // Update "Save Offline" button state
+    if (saveOfflineBtn) {
+      if (document.body.classList.contains("home-mode")) {
+        saveOfflineBtn.classList.add("hidden");
+      } else {
+        saveOfflineBtn.classList.remove("hidden");
+        if (currentFile) {
+          const saved = isFileSavedOffline(currentFile);
+          saveOfflineBtn.classList.toggle("is-saved", saved);
+          saveOfflineIcon.textContent = saved ? "✓" : "📥";
+          saveOfflineText.textContent = saved ? "Saved Offline" : "Save File Offline";
+        } else {
+          const cacheableFiles = currentItems.filter((i) => i.type !== "dir" && i.download_url);
+          const allSaved = cacheableFiles.length > 0 && cacheableFiles.every((i) => isFileSavedOffline(i));
+          saveOfflineBtn.classList.toggle("is-saved", allSaved);
+          saveOfflineIcon.textContent = allSaved ? "✓" : "📥";
+          saveOfflineText.textContent = allSaved
+            ? "Folder Saved"
+            : `Save Folder (${cacheableFiles.length})`;
+        }
+      }
+    }
+  }
+
+  function renderOfflineModal() {
+    if (!offlineSavedList || !offlineStorageSummary) return;
+    const list = getOfflineMeta();
+    const totalBytes = list.reduce((sum, item) => sum + (item.size || 0), 0);
+    offlineStorageSummary.textContent = `${list.length} file${list.length === 1 ? "" : "s"} • ${formatSize(totalBytes)} stored locally`;
+
+    offlineSavedList.innerHTML = "";
+    if (list.length === 0) {
+      offlineSavedList.innerHTML = `
+        <div style="text-align:center; padding: 28px 12px; color: var(--text-muted);">
+          No files saved offline yet. Click <strong>📥 Save Folder</strong> in any folder to download notes for offline study.
+        </div>
+      `;
+      return;
+    }
+
+    list.forEach((entry) => {
+      const row = document.createElement("div");
+      row.className = "offline-saved-item";
+      const folder = entry.path.includes("/") ? entry.path.substring(0, entry.path.lastIndexOf("/")) : "Root";
+
+      row.innerHTML = `
+        <div class="offline-item-left">
+          <span class="pinned-card-icon">${getIcon(entry)}</span>
+          <div class="offline-item-info">
+            <span class="offline-item-name">${escapeHtml(entry.name)}</span>
+            <span class="offline-item-meta">🐙 ${escapeHtml(entry.repoLabel)} • 📁 ${escapeHtml(folder)} • ${formatSize(entry.size)}</span>
+          </div>
+        </div>
+        <button type="button" class="pinned-remove-btn" title="Remove from offline cache">✕</button>
+      `;
+
+      row.querySelector(".offline-item-left").addEventListener("click", () => {
+        offlineOverlay.classList.add("hidden");
+        if (entry.repo) {
+          currentRepo = entry.repo;
+          updateRepoUI();
+        }
+        openViewer(entry);
+      });
+
+      row.querySelector(".pinned-remove-btn").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if ("caches" in window) {
+          const cache = await caches.open(OFFLINE_CACHE_NAME);
+          await cache.delete(entry.download_url);
+        }
+        const updated = getOfflineMeta().filter((x) => x.download_url !== entry.download_url);
+        setOfflineMeta(updated);
+        renderOfflineModal();
+        if (!currentFile && !document.body.classList.contains("home-mode")) {
+          renderFileGrid(currentItems, false);
+        }
+      });
+
+      offlineSavedList.appendChild(row);
+    });
+  }
+
+  if (saveOfflineBtn) {
+    saveOfflineBtn.addEventListener("click", saveCurrentViewOffline);
+  }
+
+  if (offlineLibBtn) {
+    offlineLibBtn.addEventListener("click", () => {
+      renderOfflineModal();
+      offlineOverlay.classList.remove("hidden");
+    });
+  }
+
+  if (offlineCloseBtn) offlineCloseBtn.addEventListener("click", () => offlineOverlay.classList.add("hidden"));
+  if (offlineDoneBtn) offlineDoneBtn.addEventListener("click", () => offlineOverlay.classList.add("hidden"));
+  if (offlineOverlay) {
+    offlineOverlay.addEventListener("click", (e) => {
+      if (e.target === offlineOverlay) offlineOverlay.classList.add("hidden");
+    });
+  }
+
+  if (offlineClearAllBtn) {
+    offlineClearAllBtn.addEventListener("click", async () => {
+      if ("caches" in window) {
+        await caches.delete(OFFLINE_CACHE_NAME);
+      }
+      setOfflineMeta([]);
+      renderOfflineModal();
+      if (!currentFile && !document.body.classList.contains("home-mode")) {
+        renderFileGrid(currentItems, false);
+      }
+      showToast("🗑️ Cleared all offline cached files.");
     });
   }
 
@@ -800,7 +1132,7 @@
     if (inFlightTrees[treeKey]) return inFlightTrees[treeKey];
 
     const cacheKey = `studyportal_tree_${treeKey}`;
-    const cached = sessionStorage.getItem(cacheKey);
+    const cached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
@@ -809,6 +1141,7 @@
           return parsed;
         }
       } catch {
+        localStorage.removeItem(cacheKey);
         sessionStorage.removeItem(cacheKey);
       }
     }
@@ -850,7 +1183,7 @@
                 });
 
               repoTreeCache[treeKey] = items;
-              try { sessionStorage.setItem(cacheKey, JSON.stringify(items)); } catch {}
+              try { localStorage.setItem(cacheKey, JSON.stringify(items)); } catch {}
               return items;
             }
           }
@@ -884,13 +1217,23 @@
                 });
 
               repoTreeCache[treeKey] = items;
-              try { sessionStorage.setItem(cacheKey, JSON.stringify(items)); } catch {}
+              try { localStorage.setItem(cacheKey, JSON.stringify(items)); } catch {}
               return items;
             }
           }
         }
       } catch {
-        // Fall back silently to per-folder adapter
+        // Fall back silently to per-folder adapter or offline localStorage
+        const offlineCached = localStorage.getItem(cacheKey);
+        if (offlineCached) {
+          try {
+            const parsed = JSON.parse(offlineCached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              repoTreeCache[treeKey] = parsed;
+              return parsed;
+            }
+          } catch {}
+        }
       } finally {
         delete inFlightTrees[treeKey];
       }
@@ -918,26 +1261,35 @@
     }
 
     const cacheKey = `${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${path}`;
-    const cached = sessionStorage.getItem(cacheKey);
+    const cached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
     if (cached) {
       try {
         return JSON.parse(cached);
       } catch {
+        localStorage.removeItem(cacheKey);
         sessionStorage.removeItem(cacheKey);
       }
     }
 
-    const adapter = ADAPTERS[currentRepo.platform] || ADAPTERS.github;
-    const items = await adapter.fetchContents(currentRepo, path);
+    try {
+      const adapter = ADAPTERS[currentRepo.platform] || ADAPTERS.github;
+      const items = await adapter.fetchContents(currentRepo, path);
+      const cleaned = (items || []).filter((item) => !item.name.startsWith("."));
 
-    const cleaned = (items || []).filter((item) => !item.name.startsWith("."));
-
-    if (Array.isArray(cleaned)) {
-      try {
-        sessionStorage.setItem(cacheKey, JSON.stringify(cleaned));
-      } catch { /* storage quota */ }
+      if (Array.isArray(cleaned)) {
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(cleaned));
+        } catch { /* storage quota */ }
+      }
+      return cleaned;
+    } catch (err) {
+      // Offline fallback: try returning any cached folder contents
+      const offlineCached = localStorage.getItem(cacheKey);
+      if (offlineCached) {
+        try { return JSON.parse(offlineCached); } catch {}
+      }
+      throw err;
     }
-    return cleaned;
   }
 
   // ── Rate-limit banner ──────────────────────────────────
@@ -1021,6 +1373,10 @@
 
   // ── Render helpers & Media Teardown ────────────────────
   function hideAll() {
+    if (activeFetchController) {
+      try { activeFetchController.abort(); } catch {}
+      activeFetchController = null;
+    }
     if (mediaVideo) {
       try {
         mediaVideo.pause?.();
@@ -1086,6 +1442,9 @@
       if (isSearchResult && item.path.includes("/")) {
         const folder = item.path.substring(0, item.path.lastIndexOf("/"));
         meta = `<span class="search-path-badge">${escapeHtml(folder)}</span> ${meta}`;
+      }
+      if (item.type !== "dir" && isFileSavedOffline(item)) {
+        meta += `<span class="offline-badge" title="Saved for offline access">✓ Offline</span>`;
       }
 
       const isFile = item.type !== "dir";
@@ -1160,6 +1519,7 @@
     } else if (folderReadmeSection) {
       folderReadmeSection.classList.add("hidden");
     }
+    updateOfflineUI();
   }
 
   function renderSidebarTree(items) {
@@ -1631,6 +1991,13 @@
 
     updateFileNavButtons(item);
     updateStarredUI();
+    updateOfflineUI();
+
+    if (activeFetchController) {
+      activeFetchController.abort();
+    }
+    activeFetchController = new AbortController();
+    const fetchSignal = activeFetchController.signal;
 
     if (updateHistory) {
       updateUrl({ file: item.path });
@@ -1648,10 +2015,11 @@
       markdownBody.innerHTML = "";
 
       try {
-        const res = await fetch(item.download_url);
+        const res = await fetch(item.download_url, { signal: fetchSignal });
         if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch notes.`);
         const text = await res.text();
         currentRawText = text;
+        recordFileOffline(item, new Blob([text]).size);
 
         const wordCount = text.trim().split(/\s+/).length;
         const readMin = Math.max(1, Math.ceil(wordCount / 200));
@@ -1665,6 +2033,7 @@
         isMarkdownRaw = false;
         mdModeToggle.textContent = "💻 Raw Code";
       } catch (err) {
+        if (err.name === "AbortError") return;
         markdownBody.innerHTML = `<div class="error-state"><div class="error-icon">⚠️</div><h2>Error loading notes</h2><p>${escapeHtml(err.message)}</p></div>`;
       } finally {
         viewerLoading.classList.add("loaded");
@@ -1682,6 +2051,7 @@
       audioViewerContainer.classList.add("hidden");
       viewerLoading.classList.remove("loaded");
 
+      if (item.size) recordFileOffline(item, item.size);
       resetImageZoom();
       mediaImage.src = item.download_url;
       imageInfo.textContent = "Loading image…";
@@ -1712,6 +2082,7 @@
       audioViewerContainer.classList.add("hidden");
       viewerLoading.classList.remove("loaded");
 
+      if (item.size) recordFileOffline(item, item.size);
       mediaVideo.src = item.download_url;
       mediaVideo.play().catch(() => {});
       closeSidebar();
@@ -1727,6 +2098,7 @@
       videoViewerContainer.classList.add("hidden");
       viewerLoading.classList.remove("loaded");
 
+      if (item.size) recordFileOffline(item, item.size);
       audioTitle.textContent = item.name;
       audioSub.textContent = `Audio lecture file • ${formatSize(item.size)}`;
       mediaAudio.src = item.download_url;
@@ -1735,7 +2107,97 @@
       return;
     }
 
-    // 5. IN-BROWSER CODE & TEXT VIEWER
+    // 5A. JAVA CLASS & COMPILED BINARY INSPECTION
+    if (isBinaryInspectable(item.name)) {
+      viewer.classList.remove("hidden");
+      codeViewer.classList.remove("hidden");
+      viewerLoading.classList.remove("loaded");
+
+      const isClass = ext === "class";
+      codeLangBadge.textContent = isClass ? "JAVA BYTECODE" : (ext ? ext.toUpperCase() : "BINARY");
+      codeStats.textContent = "Inspecting binary file…";
+      codeLines.innerHTML = "";
+
+      try {
+        const res = await fetch(item.download_url, { signal: fetchSignal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch file.`);
+        const buffer = await res.arrayBuffer();
+        recordFileOffline(item, buffer.byteLength);
+
+        // Find companion source file in current folder if available
+        let companionHtml = "";
+        const baseName = item.name.replace(/\.[^.]+$/, "");
+        const companionSource = currentItems.find((sibling) => {
+          if (sibling.type === "dir" || sibling.path === item.path) return false;
+          const sBase = sibling.name.replace(/\.[^.]+$/, "");
+          const sExt = getFileExt(sibling.name);
+          return sBase === baseName && (sExt === "java" || sExt === "c" || sExt === "cpp" || sExt === "rs");
+        });
+
+        if (companionSource) {
+          companionHtml = `
+            <div class="binary-companion-banner">
+              <span>💡 Companion source file <strong>${escapeHtml(companionSource.name)}</strong> is available in this folder.</span>
+              <button type="button" class="action-btn-sm" id="openCompanionBtn">Open ${escapeHtml(companionSource.name)}</button>
+            </div>
+          `;
+        }
+
+        let parsedInfoHtml = "";
+        if (isClass) {
+          const classInfo = parseJavaClassBuffer(buffer);
+          if (classInfo.valid) {
+            const poolPreview = classInfo.constantStrings.slice(0, 30).map((s) => escapeHtml(s)).join("<br>");
+            parsedInfoHtml = `
+              <div class="binary-info-panel">
+                <div class="binary-meta-row"><strong>Target JDK:</strong> ${escapeHtml(classInfo.jdkVersion)} (Major: ${classInfo.majorVersion}, Minor: ${classInfo.minorVersion})</div>
+                <div class="binary-meta-row"><strong>Constant Pool Entries:</strong> ${classInfo.constantPoolCount}</div>
+                <div class="binary-meta-row"><strong>File Size:</strong> ${formatSize(buffer.byteLength)}</div>
+                ${classInfo.constantStrings.length > 0 ? `
+                  <div class="binary-symbols-header">Constant Pool UTF-8 Symbols (Preview):</div>
+                  <div class="binary-symbols-box">${poolPreview || "None"}</div>
+                ` : ""}
+              </div>
+            `;
+          } else {
+            parsedInfoHtml = `<div class="binary-info-panel"><div class="binary-meta-row">Not a standard Java .class file (magic mismatch).</div></div>`;
+          }
+        } else {
+          parsedInfoHtml = `
+            <div class="binary-info-panel">
+              <div class="binary-meta-row"><strong>Format:</strong> Compiled Binary / Executable (${ext.toUpperCase()})</div>
+              <div class="binary-meta-row"><strong>File Size:</strong> ${formatSize(buffer.byteLength)}</div>
+            </div>
+          `;
+        }
+
+        const hexDumpText = formatHexDump(buffer, 2048);
+        currentRawText = hexDumpText;
+        codeStats.textContent = `${formatSize(buffer.byteLength)} • Hex / ASCII Inspection`;
+
+        codeLines.innerHTML = `
+          ${companionHtml}
+          ${parsedInfoHtml}
+          <div class="binary-hex-header">Hex & ASCII Dump (First 2 KB):</div>
+          <pre class="binary-hex-dump"><code>${escapeHtml(hexDumpText)}</code></pre>
+        `;
+
+        const openCompBtn = document.getElementById("openCompanionBtn");
+        if (openCompBtn && companionSource) {
+          openCompBtn.addEventListener("click", () => openViewer(companionSource));
+        }
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        codeLines.innerHTML = `<div class="code-line"><span class="line-num">!</span><span class="line-code syn-comment">Error inspecting file: ${escapeHtml(err.message)}</span></div>`;
+        codeStats.textContent = "Error";
+      } finally {
+        viewerLoading.classList.add("loaded");
+      }
+      closeSidebar();
+      return;
+    }
+
+    // 5. IN-BROWSER CODE & TEXT VIEWER (Chunked Zero-Lag Rendering)
     if (isCodeOrText(item.name)) {
       viewer.classList.remove("hidden");
       codeViewer.classList.remove("hidden");
@@ -1747,25 +2209,52 @@
       codeLines.innerHTML = "";
 
       try {
-        const res = await fetch(item.download_url);
+        const res = await fetch(item.download_url, { signal: fetchSignal });
         if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch file content.`);
         const text = await res.text();
         currentRawText = text;
 
+        const byteSize = new Blob([text]).size;
+        recordFileOffline(item, byteSize);
+
         const lines = text.split(/\r\n|\r|\n/);
         const lineCount = lines.length;
-        const sizeStr = formatSize(new Blob([text]).size);
+        const sizeStr = formatSize(byteSize);
         codeStats.textContent = `${lineCount} line${lineCount === 1 ? "" : "s"} • ${sizeStr}`;
 
-        const frag = document.createDocumentFragment();
-        lines.forEach((l, idx) => {
-          const row = document.createElement("div");
-          row.className = "code-line";
-          row.innerHTML = `<span class="line-num">${idx + 1}</span><span class="line-code">${highlightSyntax(l, ext)}</span>`;
-          frag.appendChild(row);
-        });
-        codeLines.appendChild(frag);
+        // Optimization: For huge files (> 8,000 lines) or lines with > 600 characters, skip expensive regex syntax highlighting
+        const skipHeavyHighlight = lineCount > 8000;
+
+        // Render first chunk (250 lines) immediately for instant visual feedback
+        const CHUNK_SIZE = 600;
+        let renderedIndex = 0;
+
+        function renderChunk(startIndex, count) {
+          if (currentFile !== item) return; // Discard if user navigated away
+          const frag = document.createDocumentFragment();
+          const endIndex = Math.min(startIndex + count, lineCount);
+
+          for (let idx = startIndex; idx < endIndex; idx++) {
+            const l = lines[idx];
+            const row = document.createElement("div");
+            row.className = "code-line";
+            const codeHtml = (skipHeavyHighlight || l.length > 600)
+              ? escapeHtml(l)
+              : highlightSyntax(l, ext);
+            row.innerHTML = `<span class="line-num">${idx + 1}</span><span class="line-code">${codeHtml}</span>`;
+            frag.appendChild(row);
+          }
+          codeLines.appendChild(frag);
+          renderedIndex = endIndex;
+
+          if (renderedIndex < lineCount) {
+            requestAnimationFrame(() => renderChunk(renderedIndex, CHUNK_SIZE));
+          }
+        }
+
+        renderChunk(0, 250);
       } catch (err) {
+        if (err.name === "AbortError") return;
         codeLines.innerHTML = `<div class="code-line"><span class="line-num">!</span><span class="line-code syn-comment">Error loading file: ${escapeHtml(err.message)}</span></div>`;
         codeStats.textContent = "Error";
       } finally {
@@ -2092,12 +2581,13 @@
   window.addEventListener("keydown", (e) => {
     const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
 
-    // '/' or 'Ctrl+K' / 'Cmd+K' focuses search
+    // '/' or 'Ctrl+K' / 'Cmd+K' focuses search or home repo input
     if ((e.key === "/" && !isInput) || ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K"))) {
       e.preventDefault();
-      if (searchInput) {
-        searchInput.focus();
-        searchInput.select();
+      const targetInput = document.body.classList.contains("home-mode") ? homeRepoInput : searchInput;
+      if (targetInput) {
+        targetInput.focus();
+        targetInput.select();
       }
       return;
     }
@@ -2110,6 +2600,10 @@
           searchInput.value = "";
           searchInput.dispatchEvent(new Event("input"));
         }
+        return;
+      }
+      if (offlineOverlay && !offlineOverlay.classList.contains("hidden")) {
+        offlineOverlay.classList.add("hidden");
         return;
       }
       if (devOverlay && !devOverlay.classList.contains("hidden")) {
@@ -2160,8 +2654,12 @@
     const branch = currentRepo.branch || "HEAD";
     const treeKey = `${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${branch}`;
     delete repoTreeCache[treeKey];
-    sessionStorage.removeItem(`studyportal_tree_${treeKey}`);
-    sessionStorage.removeItem(`${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentPath}`);
+    try {
+      localStorage.removeItem(`studyportal_tree_${treeKey}`);
+      sessionStorage.removeItem(`studyportal_tree_${treeKey}`);
+      localStorage.removeItem(`${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentPath}`);
+      sessionStorage.removeItem(`${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentPath}`);
+    } catch {}
     navigateTo(currentPath);
   });
 
@@ -2314,6 +2812,7 @@
   }
 
   function loadCustomRepo(parsedRepo) {
+    if (searchInput) searchInput.value = "";
     currentRepo = parsedRepo;
     saveRecentRepo(parsedRepo);
     updateRepoUI();
@@ -2338,6 +2837,7 @@
   }
 
   function resetToDefaultRepo() {
+    if (searchInput) searchInput.value = "";
     currentRepo = { ...DEFAULT_REPO };
     updateRepoUI();
     closeDevModal();
@@ -2600,6 +3100,14 @@
   } else {
     boot();
   }
+
+  // ── Network Connectivity Monitor ────────────────────────
+  window.addEventListener("offline", () => {
+    showToast("📡 You are offline. Serving cached repositories & notes.", 3500);
+  });
+  window.addEventListener("online", () => {
+    showToast("🌐 Back online!", 2000);
+  });
 
   // ── PWA Service Worker ──────────────────────────────────
   if ("serviceWorker" in navigator) {

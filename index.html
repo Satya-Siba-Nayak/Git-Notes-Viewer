@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Study Portal</title>
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=7" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -77,6 +77,14 @@
             </div>
           </div>
         </div>
+        <button type="button" class="topbar-pill-btn hidden" id="saveOfflineBtn" title="Save current folder or file for offline access">
+          <span id="saveOfflineIcon">📥</span>
+          <span id="saveOfflineText">Save Offline</span>
+        </button>
+        <button type="button" class="topbar-btn offline-lib-btn" id="offlineLibBtn" title="View files saved for offline access">
+          📦
+          <span class="offline-count-badge hidden" id="offlineCountBadge">0</span>
+        </button>
         <button type="button" class="topbar-btn" id="homeBtn" title="Open Platform Home Launchpad">
           🏠
         </button>
@@ -371,6 +379,34 @@
     </div>
   </div>
 
-  <script src="app.js?v=6"></script>
+  <!-- Offline Saved Library Modal -->
+  <div class="dev-overlay hidden" id="offlineOverlay">
+    <div class="dev-modal offline-modal" role="dialog" aria-modal="true" aria-labelledby="offlineModalTitle">
+      <div class="dev-modal-header">
+        <div class="dev-modal-title" id="offlineModalTitle">
+          <span class="dev-icon">📦</span>
+          <div>
+            <h3>Saved for Offline</h3>
+            <span class="dev-sub" id="offlineStorageSummary">0 files cached locally</span>
+          </div>
+        </div>
+        <button type="button" class="dev-close-btn" id="offlineCloseBtn" aria-label="Close modal">✕</button>
+      </div>
+
+      <div class="dev-modal-body">
+        <p class="dev-hint">
+          These files and folder trees are stored in your browser cache and can be opened anytime without an internet connection.
+        </p>
+        <div class="offline-saved-list" id="offlineSavedList"></div>
+      </div>
+
+      <div class="dev-actions">
+        <button type="button" class="btn btn-secondary" id="offlineClearAllBtn">🗑️ Clear Offline Cache</button>
+        <button type="button" class="btn btn-primary" id="offlineDoneBtn">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=7"></script>
 </body>
 </html>

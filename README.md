@@ -28,13 +28,16 @@ Paste any **GitHub**, **GitLab**, **Codeberg**, **Gitea**, or **Bitbucket** repo
 ### 📖 Rich In-Browser Viewers
 - **Markdown Notes Engine**: Renders `.md` lecture notes with a slide-over **Table of Contents (TOC)**, reading-time estimator, heading anchor links, GFM tables, nested task lists, relative image resolution, and syntax-highlighted code blocks.
 - **Auto-Rendered Folder `README.md`**: Automatically displays directory-level `README.md` syllabus or lab guides below the file grid.
-- **Code & Text Viewer**: GitHub-Dark single-pass syntax highlighter for 30+ file extensions with an unselectable line-number gutter, line-wrap toggle, byte/line stats, and one-click copy.
+- **Code & Text Viewer (Chunked Zero-Lag Rendering)**: Single-pass syntax highlighter for 30+ file extensions with line numbers, line-wrap toggle, byte/line stats, and one-click copy. Massive source files (> 8,000 lines) stream smoothly via `requestAnimationFrame` with zero UI freezing, and fast file switching cancels stale fetches with `AbortController`.
+- **Java `.class` & Compiled Binary Inspector**: In-browser inspection of compiled Java bytecode (`0xCAFEBABE`) and binaries (`.exe`, `.bin`, `.o`, `.wasm`) without forced downloads. Extracts target JDK versions (e.g. Java SE 17, 21), Constant Pool symbols, 2 KB Hex + ASCII dump, and automatically offers a companion link if the corresponding source code (`.java`, `.c`, `.cpp`) exists in the same directory.
 - **Documents & Slides Viewer**: Embedded preview for `PDF`, `PPT`, `PPTX`, `DOC`, `DOCX`, `XLS`, and `XLSX` with one-click switching between Google Docs Viewer, Microsoft Office Live, and Native Browser PDF rendering.
 - **Interactive Media Suite**: Hardware-accelerated image viewer with pointer/touch drag-to-pan and wheel zoom (`20%`–`600%`), plus HTML5 video and audio players for lecture recordings.
 
-### 📱 PWA & Offline Ready
-- **Installable Web App**: Full Web App Manifest with maskable icons (`192×192` and `512×512`) for Android, iOS, and desktop installation.
-- **Network-First Service Worker**: Keeps the app shell available offline while ensuring newly deployed updates apply immediately.
+### 📱 PWA & Full Offline Library
+- **Two-Tier Cache Architecture (`studyportal-data-v7`)**: Caches app shell assets and intercepts Git raw file content from GitHub, GitLab, Codeberg, Gitea, and Bitbucket for instant offline studying.
+- **One-Click Folder & File Caching**: Click **📥 Save Folder** or **Save File Offline** from the topbar to download entire sets of lecture notes into offline storage with real-time saving progress.
+- **Offline Library Modal**: Manage saved files, inspect storage usage, view green `✓ Offline` status badges, and open cached notes completely disconnected from the internet.
+- **Network Status Alerts**: Automatic toast notifications when internet connectivity is lost or restored.
 
 ---
 
@@ -42,8 +45,8 @@ Paste any **GitHub**, **GitLab**, **Codeberg**, **Gitea**, or **Bitbucket** repo
 
 | Shortcut | Action |
 | :--- | :--- |
-| `/` or `Ctrl + K` / `Cmd + K` | Focus the global file search bar |
-| `Escape` | Clear active search, close open modals/TOC, or exit the current file viewer |
+| `/` or `Ctrl + K` / `Cmd + K` | Focus repository omnibox on Home Screen, or global search bar inside repositories |
+| `Escape` | Clear active search, close Offline Library, Developer modal, TOC, or exit the viewer |
 | `ArrowLeft` / `ArrowRight` | Open the previous / next viewable file in the current folder |
 | `Double-Click` *(Image Viewer)* | Reset image zoom and pan to `100%` |
 
