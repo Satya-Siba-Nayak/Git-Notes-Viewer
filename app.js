@@ -2051,7 +2051,6 @@
       audioViewerContainer.classList.add("hidden");
       viewerLoading.classList.remove("loaded");
 
-      if (item.size) recordFileOffline(item, item.size);
       resetImageZoom();
       mediaImage.src = item.download_url;
       imageInfo.textContent = "Loading image…";
@@ -2062,6 +2061,7 @@
         const h = mediaImage.naturalHeight;
         const sizeStr = item.size ? ` • ${formatSize(item.size)}` : "";
         imageInfo.textContent = `${w} × ${h} px${sizeStr}`;
+        recordFileOffline(item, item.size || 0);
       };
 
       mediaImage.onerror = () => {
@@ -2082,8 +2082,10 @@
       audioViewerContainer.classList.add("hidden");
       viewerLoading.classList.remove("loaded");
 
-      if (item.size) recordFileOffline(item, item.size);
       mediaVideo.src = item.download_url;
+      mediaVideo.onloadeddata = () => {
+        recordFileOffline(item, item.size || 0);
+      };
       mediaVideo.play().catch(() => {});
       closeSidebar();
       return;
@@ -2098,10 +2100,12 @@
       videoViewerContainer.classList.add("hidden");
       viewerLoading.classList.remove("loaded");
 
-      if (item.size) recordFileOffline(item, item.size);
       audioTitle.textContent = item.name;
       audioSub.textContent = `Audio lecture file • ${formatSize(item.size)}`;
       mediaAudio.src = item.download_url;
+      mediaAudio.onloadeddata = () => {
+        recordFileOffline(item, item.size || 0);
+      };
       mediaAudio.play().catch(() => {});
       closeSidebar();
       return;
@@ -2126,19 +2130,19 @@
 
         // Find companion source file in current folder if available
         let companionHtml = "";
-        const baseName = item.name.replace(/\.[^.]+$/, "");
+        const baseName = item.name.replace(/\.[^.]+$/, "").replace(/\$.*$/, "");
         const companionSource = currentItems.find((sibling) => {
           if (sibling.type === "dir" || sibling.path === item.path) return false;
           const sBase = sibling.name.replace(/\.[^.]+$/, "");
           const sExt = getFileExt(sibling.name);
-          return sBase === baseName && (sExt === "java" || sExt === "c" || sExt === "cpp" || sExt === "rs");
+          return sBase === baseName && ["java", "c", "cpp", "rs", "go", "py"].includes(sExt);
         });
 
         if (companionSource) {
           companionHtml = `
             <div class="binary-companion-banner">
               <span>💡 Companion source file <strong>${escapeHtml(companionSource.name)}</strong> is available in this folder.</span>
-              <button type="button" class="action-btn-sm" id="openCompanionBtn">Open ${escapeHtml(companionSource.name)}</button>
+              <button type="button" class="btn btn-sm btn-primary" id="openCompanionBtn">Open ${escapeHtml(companionSource.name)}</button>
             </div>
           `;
         }
@@ -2239,7 +2243,7 @@
             const row = document.createElement("div");
             row.className = "code-line";
             const codeHtml = (skipHeavyHighlight || l.length > 600)
-              ? escapeHtml(l)
+              ? (escapeHtml(l) || "&nbsp;")
               : highlightSyntax(l, ext);
             row.innerHTML = `<span class="line-num">${idx + 1}</span><span class="line-code">${codeHtml}</span>`;
             frag.appendChild(row);
@@ -2273,9 +2277,16 @@
 
       let viewerUrl = "";
       if (ext === "pdf") {
-        currentDocEngine = "google";
-        viewerUrl = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
-        fallbackNotice.textContent = "PDF document viewer";
+        const useLocalPdf = !navigator.onLine || isFileSavedOffline(item);
+        if (useLocalPdf) {
+          currentDocEngine = "native";
+          viewerUrl = item.download_url;
+          fallbackNotice.textContent = "Native PDF Viewer (Offline Ready)";
+        } else {
+          currentDocEngine = "google";
+          viewerUrl = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
+          fallbackNotice.textContent = "PDF document viewer";
+        }
         fallbackLink.href = item.download_url;
         fallbackLink.textContent = "Open PDF Directly";
       } else {
@@ -2970,6 +2981,7 @@
     toolbar.classList.add("hidden");
     contentLoader.classList.add("hidden");
     document.body.classList.add("home-mode");
+    updateOfflineUI();
 
     if (homeScreen) homeScreen.classList.remove("hidden");
     renderHomeRecentRepos();

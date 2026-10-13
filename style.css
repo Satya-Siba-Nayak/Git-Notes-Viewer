@@ -31,6 +31,7 @@
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
   --transition: 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
 }
 
 /* ===== Reset & Base ===== */
