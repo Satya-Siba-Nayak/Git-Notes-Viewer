@@ -1,15 +1,15 @@
 /* =========================================================
-   Service Worker – Study Portal PWA (v7)
+   Service Worker – Study Portal PWA (v8)
    Two-Tier Caching: App Shell + Offline Repository Data Cache
    ========================================================= */
 
-const SHELL_CACHE = "studyportal-shell-v7";
+const SHELL_CACHE = "studyportal-shell-v8";
 const DATA_CACHE = "studyportal-data-v7";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/style.css?v=7",
-  "/app.js?v=7",
+  "/style.css?v=8",
+  "/app.js?v=8",
   "/manifest.json",
   "/icons/icon-192.png",
   "/icons/icon-512.png"

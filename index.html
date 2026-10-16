@@ -3,8 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Study Portal</title>
-  <link rel="stylesheet" href="style.css?v=7" />
+  <title>Study Portal — Universal Git Notes Viewer</title>
+  <meta name="description" content="Universal Git Notes Viewer & Study Portal — Browse, search, and study Markdown notes, PDFs, slides, Jupyter notebooks, CSV datasets, Java bytecode, and source code from any GitHub, GitLab, Codeberg, Gitea, or Bitbucket repository." />
+  <meta property="og:title" content="Study Portal — Universal Git Notes Viewer" />
+  <meta property="og:description" content="Turn any GitHub, GitLab, Codeberg, Gitea, or Bitbucket repository into an interactive study portal with offline caching." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://git-notes.satya-nayak.dev/" />
+  <link rel="stylesheet" href="style.css?v=8" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -84,6 +89,12 @@
         <button type="button" class="topbar-btn offline-lib-btn" id="offlineLibBtn" title="View files saved for offline access">
           📦
           <span class="offline-count-badge hidden" id="offlineCountBadge">0</span>
+        </button>
+        <button type="button" class="topbar-btn" id="themeToggleBtn" title="Switch reading theme (Alt+T)">
+          🌙
+        </button>
+        <button type="button" class="topbar-btn" id="shortcutsBtn" title="Keyboard shortcuts & help (?)">
+          ⌨️
         </button>
         <button type="button" class="topbar-btn" id="homeBtn" title="Open Platform Home Launchpad">
           🏠
@@ -175,6 +186,20 @@
         <div class="pinned-grid" id="pinnedGrid"></div>
       </div>
 
+      <!-- Folder Sort & View Controls -->
+      <div class="folder-controls-bar hidden" id="folderControlsBar">
+        <span class="folder-item-summary" id="folderItemSummary">0 items</span>
+        <div class="folder-controls-actions">
+          <div class="folder-sort-group" role="group" aria-label="Sort files">
+            <span class="folder-sort-label">Sort:</span>
+            <button type="button" class="sort-pill active" id="sortNameBtn" data-sort="name">Name ▲</button>
+            <button type="button" class="sort-pill" id="sortSizeBtn" data-sort="size">Size</button>
+            <button type="button" class="sort-pill" id="sortTypeBtn" data-sort="type">Type</button>
+          </div>
+          <button type="button" class="view-mode-btn" id="viewModeToggleBtn" title="Toggle Grid / List view">☰ List</button>
+        </div>
+      </div>
+
       <!-- File listing grid -->
       <div class="file-grid" id="fileGrid">
         <div class="loading-spinner" id="contentLoader">
@@ -235,6 +260,7 @@
             <div class="markdown-actions">
               <button type="button" class="btn btn-sm hidden" id="mdTocToggle" title="Table of Contents">📑 Contents</button>
               <button type="button" class="btn btn-sm" id="mdModeToggle">💻 Raw Code</button>
+              <button type="button" class="btn btn-sm" id="printMdBtn" title="Print or save notes as PDF">🖨️ Print / PDF</button>
               <button type="button" class="btn btn-copy" id="copyMdBtn">📋 Copy Notes</button>
             </div>
           </div>
@@ -250,6 +276,46 @@
               <article class="markdown-body" id="markdownBody"></article>
             </div>
           </div>
+        </div>
+
+        <!-- Jupyter Notebook (.ipynb) Viewer -->
+        <div class="notebook-viewer hidden" id="notebookViewer">
+          <div class="markdown-viewer-bar">
+            <div class="markdown-meta">
+              <span class="md-badge nb-badge">📓 NOTEBOOK</span>
+              <span class="md-stats" id="nbStats">0 cells</span>
+            </div>
+            <div class="markdown-actions">
+              <button type="button" class="btn btn-sm" id="nbRawToggle">💻 Raw JSON</button>
+              <button type="button" class="btn btn-copy" id="copyNbCodeBtn">📋 Copy All Code</button>
+            </div>
+          </div>
+          <div class="markdown-scroll-area" id="notebookScrollArea">
+            <div class="notebook-body" id="notebookBody"></div>
+          </div>
+        </div>
+
+        <!-- Interactive CSV / TSV Table Viewer -->
+        <div class="csv-viewer hidden" id="csvViewer">
+          <div class="markdown-viewer-bar">
+            <div class="markdown-meta">
+              <span class="md-badge csv-badge">📊 DATA TABLE</span>
+              <span class="md-stats" id="csvStats">0 rows × 0 cols</span>
+            </div>
+            <div class="markdown-actions">
+              <input
+                type="text"
+                id="csvFilterInput"
+                class="csv-filter-input"
+                placeholder="Filter rows…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button type="button" class="btn btn-sm" id="csvRawToggle">💻 Raw Text</button>
+              <button type="button" class="btn btn-copy" id="copyCsvBtn">📋 Copy CSV</button>
+            </div>
+          </div>
+          <div class="csv-table-scroll" id="csvTableContainer"></div>
         </div>
 
         <!-- Media Viewer (Images, Audio, Video) -->
@@ -407,6 +473,65 @@
     </div>
   </div>
 
-  <script src="app.js?v=7"></script>
+  <!-- Keyboard Shortcuts & Help Modal -->
+  <div class="dev-overlay hidden" id="shortcutsOverlay">
+    <div class="dev-modal shortcuts-modal" role="dialog" aria-modal="true" aria-labelledby="shortcutsModalTitle">
+      <div class="dev-modal-header">
+        <div class="dev-modal-title" id="shortcutsModalTitle">
+          <span class="dev-icon">⌨️</span>
+          <div>
+            <h3>Keyboard Shortcuts & Quick Guide</h3>
+            <span class="dev-sub">Navigate faster across any repository</span>
+          </div>
+        </div>
+        <button type="button" class="dev-close-btn" id="shortcutsCloseBtn" aria-label="Close modal">✕</button>
+      </div>
+
+      <div class="dev-modal-body">
+        <div class="shortcuts-grid">
+          <div class="shortcut-row">
+            <span class="shortcut-desc">Focus search bar / Home omnibox</span>
+            <div class="shortcut-keys"><kbd>/</kbd> <span>or</span> <kbd>Ctrl</kbd> + <kbd>K</kbd></div>
+          </div>
+          <div class="shortcut-row">
+            <span class="shortcut-desc">Close modal, clear search, or go back</span>
+            <div class="shortcut-keys"><kbd>Esc</kbd></div>
+          </div>
+          <div class="shortcut-row">
+            <span class="shortcut-desc">Previous / Next file in folder</span>
+            <div class="shortcut-keys"><kbd>←</kbd> / <kbd>→</kbd></div>
+          </div>
+          <div class="shortcut-row">
+            <span class="shortcut-desc">Cycle reading theme (Dark / Light / Sepia)</span>
+            <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>T</kbd></div>
+          </div>
+          <div class="shortcut-row">
+            <span class="shortcut-desc">Show this shortcuts cheat-sheet</span>
+            <div class="shortcut-keys"><kbd>?</kbd></div>
+          </div>
+          <div class="shortcut-row">
+            <span class="shortcut-desc">Reset image zoom to 100%</span>
+            <div class="shortcut-keys"><kbd>Double-Click</kbd></div>
+          </div>
+        </div>
+
+        <div class="shortcuts-platform-tips">
+          <label class="dev-label">Supported Repository Shorthands</label>
+          <div class="shortcuts-shorthand-list">
+            <div class="shorthand-chip"><code>owner/repo</code> <span>GitHub</span></div>
+            <div class="shorthand-chip"><code>gl:owner/repo</code> <span>GitLab</span></div>
+            <div class="shorthand-chip"><code>cb:owner/repo</code> <span>Codeberg</span></div>
+            <div class="shorthand-chip"><code>bb:owner/repo</code> <span>Bitbucket</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dev-actions">
+        <button type="button" class="btn btn-primary" id="shortcutsDoneBtn">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=8"></script>
 </body>
 </html>

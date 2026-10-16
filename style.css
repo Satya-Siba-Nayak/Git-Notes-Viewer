@@ -2391,4 +2391,547 @@ body.home-mode .breadcrumbs {
   overflow-x: auto;
 }
 
+/* ===== v8: Light & Sepia Reading Themes ===== */
+html[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eaeef2;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f3f4f6;
+  --bg-input: #ffffff;
+  --border: #d0d7de;
+  --border-light: #afb8c1;
+  --text-primary: #1f2328;
+  --text-secondary: #57606a;
+  --text-muted: #6e7781;
+  --accent: #0969da;
+  --accent-hover: #0550ae;
+  --accent-bg: rgba(9, 105, 218, 0.08);
+  --green: #1a7f37;
+  --orange: #9a6700;
+  --red: #cf222e;
+  --purple: #8250df;
+  --shadow: 0 4px 14px rgba(31, 35, 40, 0.08);
+  --shadow-lg: 0 12px 32px rgba(31, 35, 40, 0.14);
+}
+
+html[data-theme="sepia"] {
+  --bg-primary: #f8f4e8;
+  --bg-secondary: #f1ead8;
+  --bg-tertiary: #e6dec8;
+  --bg-card: #fbf8ef;
+  --bg-card-hover: #f2ecdc;
+  --bg-input: #fdfbf6;
+  --border: #d8ceb8;
+  --border-light: #c5b99f;
+  --text-primary: #2c241b;
+  --text-secondary: #5c4f3d;
+  --text-muted: #7d6e58;
+  --accent: #b35900;
+  --accent-hover: #8f4700;
+  --accent-bg: rgba(179, 89, 0, 0.1);
+  --green: #286e34;
+  --orange: #a86200;
+  --red: #b82c21;
+  --purple: #6f42c1;
+  --shadow: 0 4px 14px rgba(44, 36, 27, 0.08);
+  --shadow-lg: 0 12px 32px rgba(44, 36, 27, 0.15);
+}
+
+html[data-theme="light"] .code-viewer,
+html[data-theme="light"] .code-scroll-area,
+html[data-theme="sepia"] .code-viewer,
+html[data-theme="sepia"] .code-scroll-area {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+html[data-theme="light"] .line-code,
+html[data-theme="sepia"] .line-code {
+  color: var(--text-primary);
+}
+
+html[data-theme="light"] .syn-keyword,
+html[data-theme="sepia"] .syn-keyword { color: #cf222e; }
+html[data-theme="light"] .syn-string,
+html[data-theme="sepia"] .syn-string { color: #0a3069; }
+html[data-theme="light"] .syn-comment,
+html[data-theme="sepia"] .syn-comment { color: #6e7781; }
+html[data-theme="light"] .syn-number,
+html[data-theme="light"] .syn-bool,
+html[data-theme="sepia"] .syn-number,
+html[data-theme="sepia"] .syn-bool { color: #0550ae; }
+html[data-theme="light"] .syn-tag,
+html[data-theme="sepia"] .syn-tag { color: #116329; }
+
+html[data-theme="light"] .markdown-body pre,
+html[data-theme="sepia"] .markdown-body pre {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+}
+
+/* ===== v8: Folder Sort & Grid / List View Controls ===== */
+.folder-controls-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.folder-item-summary {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.folder-controls-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.folder-sort-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.folder-sort-label {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+
+.sort-pill,
+.view-mode-btn {
+  padding: 4px 9px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.sort-pill:hover,
+.view-mode-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.sort-pill.active {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.file-grid.list-view {
+  grid-template-columns: 1fr !important;
+  gap: 6px;
+}
+
+.file-grid.list-view .file-card {
+  padding: 10px 14px;
+}
+
+.file-grid.list-view .file-card-icon {
+  font-size: 1.35rem;
+}
+
+.file-grid.list-view .file-card-info {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.file-grid.list-view .file-card-meta {
+  flex-shrink: 0;
+}
+
+/* ===== v8: Markdown Code Block Header & Copy Button ===== */
+.md-code-block {
+  margin: 14px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+
+.md-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
+
+.md-code-lang {
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
+.md-code-copy-btn {
+  padding: 2px 8px;
+  font-size: 0.73rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.md-code-copy-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.md-code-block pre {
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+/* ===== v8: Jupyter Notebook (.ipynb) Viewer ===== */
+.notebook-viewer,
+.csv-viewer {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-primary);
+}
+
+.nb-badge {
+  background: rgba(210, 153, 34, 0.15);
+  color: var(--orange);
+  border-color: rgba(210, 153, 34, 0.4);
+}
+
+.csv-badge {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--green);
+  border-color: rgba(63, 185, 80, 0.4);
+}
+
+.notebook-body {
+  max-width: 960px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 28px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.nb-cell {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.nb-cell-md {
+  padding: 16px 22px;
+}
+
+.nb-cell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.nb-prompt-in {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nb-prompt-out {
+  color: var(--orange);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  margin-bottom: 6px;
+  display: block;
+}
+
+.nb-code-pre {
+  margin: 0;
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  line-height: 1.55;
+  background: var(--bg-primary);
+}
+
+.nb-outputs {
+  border-top: 1px solid var(--border);
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nb-output-stream,
+.nb-output-text {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.nb-output-error {
+  margin: 0;
+  padding: 10px;
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.35);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--red);
+  white-space: pre-wrap;
+}
+
+.nb-output-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  background: #ffffff;
+  padding: 6px;
+}
+
+/* ===== v8: Interactive CSV / TSV Table Viewer ===== */
+.csv-filter-input {
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  width: 170px;
+}
+
+.csv-filter-input:focus {
+  border-color: var(--accent);
+}
+
+.csv-table-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+
+.csv-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+
+.csv-data-table th,
+.csv-data-table td {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.csv-data-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  z-index: 2;
+}
+
+.csv-data-table th:hover {
+  background: var(--bg-card-hover);
+  color: var(--accent);
+}
+
+.csv-data-table tbody tr:nth-child(even) {
+  background: var(--bg-secondary);
+}
+
+.csv-data-table tbody tr:hover {
+  background: var(--accent-bg);
+}
+
+.csv-row-num {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  text-align: right !important;
+  width: 44px;
+  user-select: none;
+}
+
+/* ===== v8: Keyboard Shortcuts Modal ===== */
+.shortcuts-modal {
+  max-width: 520px;
+}
+
+.shortcuts-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.shortcut-desc {
+  font-size: 0.84rem;
+  color: var(--text-primary);
+}
+
+.shortcut-keys {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.shortcut-keys kbd {
+  padding: 3px 7px;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.shortcuts-platform-tips {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcuts-shorthand-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.shorthand-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 0.78rem;
+}
+
+.shorthand-chip code {
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.shorthand-chip span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+/* ===== v8: Clean Print / Save-as-PDF Stylesheet ===== */
+@media print {
+  .sidebar,
+  .sidebar-overlay,
+  .topbar,
+  .toolbar,
+  .markdown-viewer-bar,
+  .markdown-toc,
+  .code-viewer-bar,
+  .viewer-fallback,
+  .folder-controls-bar,
+  .pinned-section,
+  .toast,
+  .dev-overlay,
+  .md-code-copy-btn {
+    display: none !important;
+  }
+
+  body,
+  .main,
+  .content,
+  .viewer,
+  .markdown-viewer,
+  .markdown-layout,
+  .markdown-scroll-area,
+  .notebook-viewer,
+  .code-viewer,
+  .code-scroll-area {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    position: static !important;
+  }
+
+  .markdown-body,
+  .notebook-body {
+    max-width: 100% !important;
+    padding: 0 !important;
+    color: #000000 !important;
+  }
+
+  .markdown-body pre,
+  .md-code-block {
+    border: 1px solid #cccccc !important;
+    background: #f6f8fa !important;
+    page-break-inside: avoid;
+  }
+}
+
 

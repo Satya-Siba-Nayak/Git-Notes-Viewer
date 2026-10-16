@@ -314,8 +314,33 @@
   const devApply = document.getElementById("devApply");
   const devReset = document.getElementById("devReset");
   const devClose = document.getElementById("devClose");
+  const themeToggleBtn = document.getElementById("themeToggleBtn");
+  const shortcutsBtn = document.getElementById("shortcutsBtn");
+  const shortcutsOverlay = document.getElementById("shortcutsOverlay");
+  const shortcutsCloseBtn = document.getElementById("shortcutsCloseBtn");
+  const shortcutsDoneBtn = document.getElementById("shortcutsDoneBtn");
+  const folderControlsBar = document.getElementById("folderControlsBar");
+  const folderItemSummary = document.getElementById("folderItemSummary");
+  const sortNameBtn = document.getElementById("sortNameBtn");
+  const sortSizeBtn = document.getElementById("sortSizeBtn");
+  const sortTypeBtn = document.getElementById("sortTypeBtn");
+  const viewModeToggleBtn = document.getElementById("viewModeToggleBtn");
+  const printMdBtn = document.getElementById("printMdBtn");
+  const notebookViewer = document.getElementById("notebookViewer");
+  const nbStats = document.getElementById("nbStats");
+  const nbRawToggle = document.getElementById("nbRawToggle");
+  const copyNbCodeBtn = document.getElementById("copyNbCodeBtn");
+  const notebookBody = document.getElementById("notebookBody");
+  const csvViewer = document.getElementById("csvViewer");
+  const csvStats = document.getElementById("csvStats");
+  const csvFilterInput = document.getElementById("csvFilterInput");
+  const csvRawToggle = document.getElementById("csvRawToggle");
+  const copyCsvBtn = document.getElementById("copyCsvBtn");
+  const csvTableContainer = document.getElementById("csvTableContainer");
 
   // ── State ───────────────────────────────────────────────
+  const THEME_KEY = "studyportal_theme";
+  const VIEW_MODE_KEY = "studyportal_view_mode";
   let currentPath = "";
   let currentItems = [];
   let currentFile = null;
@@ -327,6 +352,16 @@
   let isCodeWrapped = false;
   let isMarkdownRaw = false;
   let activeFetchController = null;
+  let currentSortBy = "name"; // "name" | "size" | "type"
+  let currentSortAsc = true;
+  let isListView = false;
+  let isNotebookRaw = false;
+  let currentNotebookCode = "";
+  let currentNotebookData = null;
+  let isCsvRaw = false;
+  let currentCsvRows = [];
+  let csvSortCol = -1;
+  let csvSortAsc = true;
 
   // Zoom & Pan state for image preview
   let zoomScale = 1;
@@ -355,7 +390,7 @@
     xml: "XML", svg: "SVG",
     yaml: "YAML", yml: "YAML",
     toml: "TOML", ini: "INI", env: "ENV",
-    txt: "Plain Text", log: "Log", csv: "CSV",
+    txt: "Plain Text", log: "Log", csv: "CSV", tsv: "TSV",
     sh: "Shell", bash: "Bash", zsh: "Zsh", bat: "Batch", ps1: "PowerShell",
     dockerfile: "Dockerfile", makefile: "Makefile"
   };
@@ -371,6 +406,14 @@
   function getFileExt(name) {
     const idx = name.lastIndexOf(".");
     return idx > 0 ? name.slice(idx + 1).toLowerCase() : "";
+  }
+
+  function isNotebook(name) {
+    return getFileExt(name) === "ipynb";
+  }
+
+  function isCsvOrTsv(name) {
+    return ["csv", "tsv"].includes(getFileExt(name));
   }
 
   function isBinaryInspectable(name) {
@@ -408,6 +451,8 @@
     return (
       isDocument(name) ||
       isMarkdown(name) ||
+      isNotebook(name) ||
+      isCsvOrTsv(name) ||
       isCodeOrText(name) ||
       isImage(name) ||
       isVideo(name) ||
@@ -420,6 +465,8 @@
     if (item.type === "dir") return "📁";
     const ext = getFileExt(item.name);
     if (ext === "pdf") return "📄";
+    if (ext === "ipynb") return "📓";
+    if (["csv", "tsv"].includes(ext)) return "📊";
     if (["ppt", "pptx"].includes(ext)) return "📊";
     if (["doc", "docx"].includes(ext)) return "📝";
     if (["xls", "xlsx"].includes(ext)) return "📈";
@@ -433,6 +480,22 @@
     if (["py", "js", "ts", "html", "css", "java", "c", "cpp", "cs", "sql", "sh", "rs", "go"].includes(ext)) return "💻";
     if (["txt", "log", "json", "yaml", "yml"].includes(ext)) return "📄";
     return "📄";
+  }
+
+  function updatePageTitle() {
+    if (document.body.classList.contains("home-mode")) {
+      document.title = "✦ Study Portal — Universal Git Notes Viewer";
+      return;
+    }
+    const repoName = currentRepo?.name || "TYBCA";
+    if (currentFile) {
+      const folderPart = currentPath ? ` • ${currentPath}` : "";
+      document.title = `${currentFile.name}${folderPart} — ${repoName}`;
+    } else if (currentPath) {
+      document.title = `${currentPath} — ${repoName} • Study Portal`;
+    } else {
+      document.title = `${repoName} — Study Portal`;
+    }
   }
 
   // ── Pure Vanilla JS Java .class & Binary Inspector ──────
@@ -926,6 +989,166 @@
     });
   }
 
+  // ── Reading Themes (Dark / Light / Sepia) & Preferences ─
+  function applyTheme(theme) {
+    const validTheme = ["dark", "light", "sepia"].includes(theme) ? theme : "dark";
+    if (validTheme === "dark") {
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", validTheme);
+    }
+    if (themeToggleBtn) {
+      themeToggleBtn.textContent = validTheme === "light" ? "☀️" : validTheme === "sepia" ? "📜" : "🌙";
+      const label = validTheme === "light" ? "Light Theme" : validTheme === "sepia" ? "Sepia Reading Mode" : "Dark Theme";
+      themeToggleBtn.title = `${label} (Click or press Alt+T to switch)`;
+    }
+    try {
+      localStorage.setItem(THEME_KEY, validTheme);
+    } catch {}
+  }
+
+  function cycleTheme() {
+    const current = document.documentElement.getAttribute("data-theme") || "dark";
+    const next = current === "dark" ? "light" : current === "light" ? "sepia" : "dark";
+    applyTheme(next);
+    const label = next === "light" ? "☀️ Light Theme" : next === "sepia" ? "📜 Sepia Reading Theme" : "🌙 GitHub Dark Theme";
+    showToast(`Switched to ${label}`);
+  }
+
+  function initThemeAndPreferences() {
+    try {
+      const savedTheme = localStorage.getItem(THEME_KEY) || "dark";
+      applyTheme(savedTheme);
+      const savedView = localStorage.getItem(VIEW_MODE_KEY);
+      if (savedView === "list") {
+        isListView = true;
+      }
+    } catch {}
+  }
+
+  initThemeAndPreferences();
+
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener("click", cycleTheme);
+  }
+
+  // ── Folder Sorting & Grid/List View Controls ───────────
+  function sortItemsList(items) {
+    if (!Array.isArray(items)) return [];
+    return items.sort((a, b) => {
+      // Always keep folders at the top
+      if (a.type === "dir" && b.type !== "dir") return -1;
+      if (a.type !== "dir" && b.type === "dir") return 1;
+
+      let cmp = 0;
+      if (currentSortBy === "size") {
+        cmp = (a.size || 0) - (b.size || 0);
+        if (cmp === 0) cmp = a.name.localeCompare(b.name);
+      } else if (currentSortBy === "type") {
+        const extA = getFileExt(a.name);
+        const extB = getFileExt(b.name);
+        cmp = extA.localeCompare(extB);
+        if (cmp === 0) cmp = a.name.localeCompare(b.name);
+      } else {
+        cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+      }
+      return currentSortAsc ? cmp : -cmp;
+    });
+  }
+
+  function updateFolderControlsUI(items, isSearchResult = false) {
+    if (!folderControlsBar) return;
+    if (currentFile || document.body.classList.contains("home-mode") || !items || items.length === 0) {
+      folderControlsBar.classList.add("hidden");
+      return;
+    }
+
+    folderControlsBar.classList.remove("hidden");
+
+    const dirCount = items.filter((i) => i.type === "dir").length;
+    const fileCount = items.length - dirCount;
+    if (folderItemSummary) {
+      if (isSearchResult) {
+        folderItemSummary.textContent = `🔍 ${items.length} matching result${items.length === 1 ? "" : "s"}`;
+      } else {
+        const parts = [];
+        if (dirCount > 0) parts.push(`${dirCount} folder${dirCount === 1 ? "" : "s"}`);
+        if (fileCount > 0) parts.push(`${fileCount} file${fileCount === 1 ? "" : "s"}`);
+        folderItemSummary.textContent = parts.join(" • ") || "0 items";
+      }
+    }
+
+    const arrow = currentSortAsc ? "↑" : "↓";
+    if (sortNameBtn) {
+      sortNameBtn.classList.toggle("active", currentSortBy === "name");
+      sortNameBtn.textContent = currentSortBy === "name" ? `Name ${arrow}` : "Name";
+    }
+    if (sortSizeBtn) {
+      sortSizeBtn.classList.toggle("active", currentSortBy === "size");
+      sortSizeBtn.textContent = currentSortBy === "size" ? `Size ${arrow}` : "Size";
+    }
+    if (sortTypeBtn) {
+      sortTypeBtn.classList.toggle("active", currentSortBy === "type");
+      sortTypeBtn.textContent = currentSortBy === "type" ? `Type ${arrow}` : "Type";
+    }
+
+    if (fileGrid) {
+      fileGrid.classList.toggle("list-view", isListView);
+    }
+    if (viewModeToggleBtn) {
+      viewModeToggleBtn.textContent = isListView ? "⊞ Grid" : "☰ List";
+      viewModeToggleBtn.title = isListView ? "Switch to Grid View" : "Switch to Compact List View";
+    }
+  }
+
+  function handleSortChange(sortField) {
+    if (currentSortBy === sortField) {
+      currentSortAsc = !currentSortAsc;
+    } else {
+      currentSortBy = sortField;
+      currentSortAsc = sortField === "size" ? false : true; // Default largest-first for size
+    }
+    sortItemsList(currentItems);
+    renderFileGrid(currentItems, false);
+    renderSidebarTree(currentItems);
+  }
+
+  if (sortNameBtn) sortNameBtn.addEventListener("click", () => handleSortChange("name"));
+  if (sortSizeBtn) sortSizeBtn.addEventListener("click", () => handleSortChange("size"));
+  if (sortTypeBtn) sortTypeBtn.addEventListener("click", () => handleSortChange("type"));
+
+  if (viewModeToggleBtn) {
+    viewModeToggleBtn.addEventListener("click", () => {
+      isListView = !isListView;
+      try {
+        localStorage.setItem(VIEW_MODE_KEY, isListView ? "list" : "grid");
+      } catch {}
+      updateFolderControlsUI(currentItems, false);
+    });
+  }
+
+  // ── Keyboard Shortcuts Modal ───────────────────────────
+  if (shortcutsBtn) {
+    shortcutsBtn.addEventListener("click", () => {
+      if (shortcutsOverlay) shortcutsOverlay.classList.remove("hidden");
+    });
+  }
+  if (shortcutsCloseBtn) {
+    shortcutsCloseBtn.addEventListener("click", () => {
+      if (shortcutsOverlay) shortcutsOverlay.classList.add("hidden");
+    });
+  }
+  if (shortcutsDoneBtn) {
+    shortcutsDoneBtn.addEventListener("click", () => {
+      if (shortcutsOverlay) shortcutsOverlay.classList.add("hidden");
+    });
+  }
+  if (shortcutsOverlay) {
+    shortcutsOverlay.addEventListener("click", (e) => {
+      if (e.target === shortcutsOverlay) shortcutsOverlay.classList.add("hidden");
+    });
+  }
+
   // ── Recent Repositories Management ─────────────────────
   function getRecentRepos() {
     try {
@@ -1339,6 +1562,7 @@
     }
 
     hideAll();
+    updatePageTitle();
     fileGrid.classList.remove("hidden");
     contentLoader.classList.remove("hidden");
     clearFileCards();
@@ -1349,17 +1573,15 @@
     viewer.classList.add("hidden");
     codeViewer.classList.add("hidden");
     markdownViewer.classList.add("hidden");
+    if (notebookViewer) notebookViewer.classList.add("hidden");
+    if (csvViewer) csvViewer.classList.add("hidden");
     mediaViewer.classList.add("hidden");
     viewerFallback.classList.add("hidden");
 
     try {
       const items = await fetchContents(path);
       currentItems = Array.isArray(items) ? items : [];
-      currentItems.sort((a, b) => {
-        if (a.type === "dir" && b.type !== "dir") return -1;
-        if (a.type !== "dir" && b.type === "dir") return 1;
-        return a.name.localeCompare(b.name);
-      });
+      sortItemsList(currentItems);
 
       contentLoader.classList.add("hidden");
       renderPinnedSection();
@@ -1399,6 +1621,7 @@
     document.body.classList.remove("home-mode");
     if (homeScreen) homeScreen.classList.add("hidden");
     if (pinnedSection) pinnedSection.classList.add("hidden");
+    if (folderControlsBar) folderControlsBar.classList.add("hidden");
     if (folderReadmeSection) folderReadmeSection.classList.add("hidden");
     if (markdownToc) markdownToc.classList.add("hidden");
     if (mdTocToggle) mdTocToggle.classList.add("hidden");
@@ -1407,6 +1630,8 @@
     viewer.classList.add("hidden");
     codeViewer.classList.add("hidden");
     markdownViewer.classList.add("hidden");
+    if (notebookViewer) notebookViewer.classList.add("hidden");
+    if (csvViewer) csvViewer.classList.add("hidden");
     mediaViewer.classList.add("hidden");
     errorState.classList.add("hidden");
     emptyState.classList.add("hidden");
@@ -1425,11 +1650,13 @@
     if (items.length === 0) {
       fileGrid.classList.add("hidden");
       emptyState.classList.remove("hidden");
+      if (folderControlsBar) folderControlsBar.classList.add("hidden");
       if (folderReadmeSection) folderReadmeSection.classList.add("hidden");
       return;
     }
 
     emptyState.classList.add("hidden");
+    updateFolderControlsUI(items, isSearchResult);
 
     items.forEach((item) => {
       const card = document.createElement("div");
@@ -1727,6 +1954,10 @@
         if (safeUrl.startsWith("#")) {
           return `<a href="${safeUrl}">${text}</a>`;
         }
+        const isExternal = /^(https?:|mailto:|tel:)/i.test(safeUrl);
+        if (!isExternal && safeUrl !== "#") {
+          return `<a href="${safeUrl}" data-md-link="${escapeHtml(url.trim())}" title="Open in Study Portal">${text}</a>`;
+        }
         return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${text}</a>`;
       });
       return t;
@@ -1735,7 +1966,7 @@
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Code blocks with syntax highlighting
+      // Code blocks with syntax highlighting & copy header
       if (line.trim().startsWith("```")) {
         if (!inCodeBlock) {
           flushAllLists();
@@ -1748,7 +1979,10 @@
           const highlighted = codeBlockContent
             .map((codeLine) => highlightSyntax(codeLine, codeBlockLang))
             .join("\n");
-          htmlParts.push(`<pre><code class="lang-${escapeHtml(codeBlockLang)}">${highlighted}</code></pre>`);
+          const langLabel = codeBlockLang ? escapeHtml(codeBlockLang.toUpperCase()) : "CODE";
+          htmlParts.push(
+            `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${langLabel}</span><button type="button" class="md-code-copy-btn" title="Copy code block">📋 Copy</button></div><pre><code class="lang-${escapeHtml(codeBlockLang)}">${highlighted}</code></pre></div>`
+          );
         }
         continue;
       }
@@ -1875,6 +2109,311 @@
     return { html: htmlParts.join("\n"), headings };
   }
 
+  // ── Delegated Click Handler for Markdown Code Copy & Internal Repo Links ─
+  function resolveRepoPath(baseFolder, relHref) {
+    const cleanHref = decodeURIComponent(relHref.split("#")[0].split("?")[0]).replace(/^\/+/, "");
+    if (!cleanHref) return "";
+    const stack = baseFolder ? baseFolder.split("/").filter(Boolean) : [];
+    const parts = cleanHref.split("/");
+    for (const part of parts) {
+      if (!part || part === ".") continue;
+      if (part === "..") stack.pop();
+      else stack.push(part);
+    }
+    return stack.join("/");
+  }
+
+  document.addEventListener("click", async (e) => {
+    // 1. Copy button inside Markdown or Jupyter code blocks
+    const copyBtn = e.target.closest(".md-code-copy-btn");
+    if (copyBtn) {
+      e.preventDefault();
+      const block = copyBtn.closest(".md-code-block, .nb-cell");
+      const codeEl = block ? block.querySelector("pre code") : null;
+      if (codeEl) {
+        const ok = await copyToClipboard(codeEl.textContent || "");
+        if (ok) {
+          const orig = copyBtn.textContent;
+          copyBtn.textContent = "✓ Copied!";
+          showToast("Code snippet copied!");
+          setTimeout(() => { copyBtn.textContent = orig; }, 1800);
+        }
+      }
+      return;
+    }
+
+    // 2. Internal relative repository links inside Markdown notes or folder README
+    const mdLink = e.target.closest("a[data-md-link]");
+    if (mdLink) {
+      e.preventDefault();
+      const rawHref = mdLink.getAttribute("data-md-link") || "";
+      const resolvedPath = resolveRepoPath(currentPath, rawHref);
+      if (!resolvedPath) {
+        navigateTo("");
+        return;
+      }
+
+      const branch = currentRepo.branch || "HEAD";
+      const treeKey = `${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${branch}`;
+      const tree = repoTreeCache[treeKey] || (await fetchRepoTree(currentRepo));
+
+      if (tree && Array.isArray(tree)) {
+        const match = tree.find((it) => it.path.toLowerCase() === resolvedPath.toLowerCase());
+        if (match) {
+          handleItemClick(match);
+          return;
+        }
+      }
+
+      const siblingMatch = currentItems.find((it) => it.path.toLowerCase() === resolvedPath.toLowerCase() || it.name.toLowerCase() === resolvedPath.toLowerCase());
+      if (siblingMatch) {
+        handleItemClick(siblingMatch);
+        return;
+      }
+
+      // Fallback: treat as folder path if no extension, otherwise try navigating to parent
+      if (!getFileExt(resolvedPath)) {
+        navigateTo(resolvedPath);
+      } else {
+        showToast(`Could not locate "${resolvedPath}" in this repository.`);
+      }
+    }
+  });
+
+  if (printMdBtn) {
+    printMdBtn.addEventListener("click", () => {
+      window.print();
+    });
+  }
+
+  // ── Jupyter Notebook (.ipynb) Parser & Renderer ─────────
+  function normalizeNbLines(source) {
+    if (!source) return "";
+    if (Array.isArray(source)) return source.join("");
+    return String(source);
+  }
+
+  function stripAnsiCodes(str) {
+    return String(str || "").replace(/\x1b\[[0-9;]*m/g, "");
+  }
+
+  function renderNotebook(nbData, baseRawUrl = "") {
+    if (!nbData || !Array.isArray(nbData.cells)) {
+      return { html: `<div class="error-state"><h2>Invalid Jupyter Notebook</h2><p>No cells array found in .ipynb file.</p></div>`, allCode: "", cellCount: 0 };
+    }
+
+    const lang =
+      nbData.metadata?.kernelspec?.language ||
+      nbData.metadata?.language_info?.name ||
+      "python";
+    const extMap = { python: "py", javascript: "js", typescript: "ts", r: "r", julia: "jl", cpp: "cpp", c: "c", java: "java", rust: "rs", go: "go", sql: "sql" };
+    const syntaxExt = extMap[lang.toLowerCase()] || lang.toLowerCase();
+
+    const htmlParts = [];
+    const codeBlocks = [];
+
+    nbData.cells.forEach((cell, idx) => {
+      const cellType = cell.cell_type || "code";
+      const sourceText = normalizeNbLines(cell.source);
+
+      if (cellType === "markdown" || cellType === "raw") {
+        const renderedMd = cellType === "markdown"
+          ? parseMarkdown(sourceText, baseRawUrl).html
+          : `<pre><code>${escapeHtml(sourceText)}</code></pre>`;
+        htmlParts.push(`
+          <div class="nb-cell nb-cell-markdown">
+            <div class="nb-md-content markdown-body">${renderedMd}</div>
+          </div>
+        `);
+        return;
+      }
+
+      if (cellType === "code") {
+        if (sourceText.trim()) codeBlocks.push(`# In[${cell.execution_count || idx + 1}]:\n${sourceText}`);
+        const execCount = cell.execution_count != null ? cell.execution_count : " ";
+        const highlightedCode = sourceText
+          .split(/\r\n|\r|\n/)
+          .map((line) => highlightSyntax(line, syntaxExt))
+          .join("\n");
+
+        // Render cell outputs
+        const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
+        const outParts = [];
+
+        outputs.forEach((out) => {
+          const outType = out.output_type;
+          if (outType === "stream") {
+            const text = stripAnsiCodes(normalizeNbLines(out.text));
+            if (text) {
+              outParts.push(`<pre class="nb-output-stream">${escapeHtml(text)}</pre>`);
+            }
+          } else if (outType === "error") {
+            const tb = Array.isArray(out.traceback)
+              ? stripAnsiCodes(out.traceback.join("\n"))
+              : `${out.ename || "Error"}: ${out.evalue || ""}`;
+            outParts.push(`<pre class="nb-output-error">${escapeHtml(tb)}</pre>`);
+          } else if (outType === "execute_result" || outType === "display_data") {
+            const data = out.data || {};
+            if (data["image/png"]) {
+              const b64 = normalizeNbLines(data["image/png"]).replace(/\s+/g, "");
+              outParts.push(`<div class="nb-output-plot"><img class="nb-output-img" src="data:image/png;base64,${b64}" alt="Notebook Plot" /></div>`);
+            } else if (data["image/jpeg"]) {
+              const b64 = normalizeNbLines(data["image/jpeg"]).replace(/\s+/g, "");
+              outParts.push(`<div class="nb-output-plot"><img class="nb-output-img" src="data:image/jpeg;base64,${b64}" alt="Notebook Plot" /></div>`);
+            } else if (data["text/markdown"]) {
+              const mdText = normalizeNbLines(data["text/markdown"]);
+              outParts.push(`<div class="nb-output-md markdown-body">${parseMarkdown(mdText, baseRawUrl).html}</div>`);
+            } else if (data["text/plain"]) {
+              const plain = stripAnsiCodes(normalizeNbLines(data["text/plain"]));
+              outParts.push(`<pre class="nb-output-stream">${escapeHtml(plain)}</pre>`);
+            }
+          }
+        });
+
+        const outputsHtml = outParts.length > 0
+          ? `<div class="nb-outputs">${outParts.join("")}</div>`
+          : "";
+
+        htmlParts.push(`
+          <div class="nb-cell nb-cell-code">
+            <div class="nb-cell-header">
+              <span class="nb-prompt nb-prompt-in">In [${escapeHtml(String(execCount))}]:</span>
+              <span class="nb-cell-lang">${escapeHtml(lang.toUpperCase())}</span>
+              <button type="button" class="md-code-copy-btn" title="Copy cell code">📋 Copy Cell</button>
+            </div>
+            <div class="nb-code-area"><pre><code class="lang-${escapeHtml(syntaxExt)}">${highlightedCode || "&nbsp;"}</code></pre></div>
+            ${outputsHtml}
+          </div>
+        `);
+      }
+    });
+
+    return {
+      html: htmlParts.join("\n"),
+      allCode: codeBlocks.join("\n\n"),
+      cellCount: nbData.cells.length,
+      lang
+    };
+  }
+
+  // ── RFC-4180 CSV & TSV Parser & Interactive Table ───────
+  function parseCsvOrTsv(text, delimiter = ",") {
+    const rows = [];
+    let currentRow = [];
+    let currentVal = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      const next = text[i + 1];
+
+      if (inQuotes) {
+        if (ch === '"' && next === '"') {
+          currentVal += '"';
+          i++;
+        } else if (ch === '"') {
+          inQuotes = false;
+        } else {
+          currentVal += ch;
+        }
+      } else {
+        if (ch === '"') {
+          inQuotes = true;
+        } else if (ch === delimiter) {
+          currentRow.push(currentVal.trim());
+          currentVal = "";
+        } else if (ch === "\r" && next === "\n") {
+          currentRow.push(currentVal.trim());
+          if (currentRow.some((c) => c !== "")) rows.push(currentRow);
+          currentRow = [];
+          currentVal = "";
+          i++;
+        } else if (ch === "\n" || ch === "\r") {
+          currentRow.push(currentVal.trim());
+          if (currentRow.some((c) => c !== "")) rows.push(currentRow);
+          currentRow = [];
+          currentVal = "";
+        } else {
+          currentVal += ch;
+        }
+      }
+    }
+    if (currentVal !== "" || currentRow.length > 0) {
+      currentRow.push(currentVal.trim());
+      if (currentRow.some((c) => c !== "")) rows.push(currentRow);
+    }
+    return rows;
+  }
+
+  function renderCsvTable() {
+    if (!csvTableContainer) return;
+    if (!currentCsvRows || currentCsvRows.length === 0) {
+      csvTableContainer.innerHTML = `<div class="empty-state"><p>Empty dataset.</p></div>`;
+      return;
+    }
+
+    const headers = currentCsvRows[0];
+    let dataRows = currentCsvRows.slice(1);
+    const filterQuery = (csvFilterInput?.value || "").toLowerCase().trim();
+
+    if (filterQuery) {
+      dataRows = dataRows.filter((row) =>
+        row.some((cell) => String(cell).toLowerCase().includes(filterQuery))
+      );
+    }
+
+    if (csvSortCol >= 0) {
+      dataRows = [...dataRows].sort((a, b) => {
+        const valA = a[csvSortCol] ?? "";
+        const valB = b[csvSortCol] ?? "";
+        const numA = Number(valA);
+        const numB = Number(valB);
+        let cmp = 0;
+        if (valA !== "" && valB !== "" && !Number.isNaN(numA) && !Number.isNaN(numB)) {
+          cmp = numA - numB;
+        } else {
+          cmp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: "base" });
+        }
+        return csvSortAsc ? cmp : -cmp;
+      });
+    }
+
+    const maxDisplay = 1500;
+    const displayRows = dataRows.slice(0, maxDisplay);
+
+    let html = `<table class="csv-data-table"><thead><tr><th class="csv-row-index">#</th>`;
+    headers.forEach((h, colIdx) => {
+      const isSorted = csvSortCol === colIdx;
+      const sortArrow = isSorted ? (csvSortAsc ? " ↑" : " ↓") : "";
+      html += `<th data-col="${colIdx}" title="Click to sort by ${escapeHtml(h || `Col ${colIdx + 1}`)}">${escapeHtml(h || `Col ${colIdx + 1}`)}<span class="csv-sort-indicator">${sortArrow}</span></th>`;
+    });
+    html += `</tr></thead><tbody>`;
+
+    displayRows.forEach((row, rIdx) => {
+      html += `<tr><td class="csv-row-index">${rIdx + 1}</td>`;
+      for (let c = 0; c < headers.length; c++) {
+        html += `<td>${escapeHtml(row[c] ?? "")}</td>`;
+      }
+      html += `</tr>`;
+    });
+    html += `</tbody></table>`;
+
+    csvTableContainer.innerHTML = html;
+
+    csvTableContainer.querySelectorAll("th[data-col]").forEach((th) => {
+      th.addEventListener("click", () => {
+        const col = Number(th.dataset.col);
+        if (csvSortCol === col) {
+          csvSortAsc = !csvSortAsc;
+        } else {
+          csvSortCol = col;
+          csvSortAsc = true;
+        }
+        renderCsvTable();
+      });
+    });
+  }
+
   // ── Markdown TOC Setup ──────────────────────────────────
   function setupMarkdownToc(headings) {
     if (!mdTocToggle || !markdownToc || !tocList) return;
@@ -1962,6 +2501,7 @@
   async function openViewer(item, updateHistory = true) {
     currentFile = item;
     hideAll();
+    updatePageTitle();
 
     // Sync folder context if jumping to a file from Pinned Resources or Global Search
     const parentPath = item.path.includes("/")
@@ -1971,11 +2511,8 @@
       currentPath = parentPath;
       renderBreadcrumbs(currentPath);
       fetchContents(currentPath).then((items) => {
-        currentItems = (items || []).sort((a, b) => {
-          if (a.type === "dir" && b.type !== "dir") return -1;
-          if (a.type !== "dir" && b.type === "dir") return 1;
-          return a.name.localeCompare(b.name);
-        });
+        currentItems = Array.isArray(items) ? items : [];
+        sortItemsList(currentItems);
         renderSidebarTree(currentItems);
         if (currentFile && currentFile.path === item.path) {
           updateFileNavButtons(item);
@@ -2035,6 +2572,87 @@
       } catch (err) {
         if (err.name === "AbortError") return;
         markdownBody.innerHTML = `<div class="error-state"><div class="error-icon">⚠️</div><h2>Error loading notes</h2><p>${escapeHtml(err.message)}</p></div>`;
+      } finally {
+        viewerLoading.classList.add("loaded");
+      }
+      closeSidebar();
+      return;
+    }
+
+    // 1B. JUPYTER NOTEBOOK (.ipynb) VIEWER
+    if (isNotebook(item.name)) {
+      viewer.classList.remove("hidden");
+      if (notebookViewer) notebookViewer.classList.remove("hidden");
+      viewerLoading.classList.remove("loaded");
+      if (nbStats) nbStats.textContent = "Loading notebook…";
+      if (notebookBody) notebookBody.innerHTML = "";
+
+      try {
+        const res = await fetch(item.download_url, { signal: fetchSignal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch notebook.`);
+        const text = await res.text();
+        currentRawText = text;
+        const byteSize = new Blob([text]).size;
+        recordFileOffline(item, byteSize);
+
+        const nbJson = JSON.parse(text);
+        currentNotebookData = nbJson;
+        currentBaseRawUrl = getBaseRawUrl(item.download_url);
+
+        const rendered = renderNotebook(nbJson, currentBaseRawUrl);
+        currentNotebookCode = rendered.allCode;
+        if (notebookBody) notebookBody.innerHTML = rendered.html;
+        if (nbStats) {
+          nbStats.textContent = `${rendered.cellCount} cells • ${rendered.lang.toUpperCase()} • ${formatSize(byteSize)}`;
+        }
+        isNotebookRaw = false;
+        if (nbRawToggle) nbRawToggle.textContent = "💻 Raw JSON";
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        if (notebookBody) {
+          notebookBody.innerHTML = `<div class="error-state"><div class="error-icon">⚠️</div><h2>Error loading notebook</h2><p>${escapeHtml(err.message)}</p></div>`;
+        }
+      } finally {
+        viewerLoading.classList.add("loaded");
+      }
+      closeSidebar();
+      return;
+    }
+
+    // 1C. INTERACTIVE CSV / TSV TABLE VIEWER
+    if (isCsvOrTsv(item.name)) {
+      viewer.classList.remove("hidden");
+      if (csvViewer) csvViewer.classList.remove("hidden");
+      viewerLoading.classList.remove("loaded");
+      if (csvStats) csvStats.textContent = "Loading dataset…";
+      if (csvTableContainer) csvTableContainer.innerHTML = "";
+      if (csvFilterInput) csvFilterInput.value = "";
+      csvSortCol = -1;
+      csvSortAsc = true;
+      isCsvRaw = false;
+      if (csvRawToggle) csvRawToggle.textContent = "💻 Raw Text";
+
+      try {
+        const res = await fetch(item.download_url, { signal: fetchSignal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch dataset.`);
+        const text = await res.text();
+        currentRawText = text;
+        const byteSize = new Blob([text]).size;
+        recordFileOffline(item, byteSize);
+
+        const delim = ext === "tsv" ? "\t" : ",";
+        currentCsvRows = parseCsvOrTsv(text, delim);
+        const rowCount = Math.max(0, currentCsvRows.length - 1);
+        const colCount = currentCsvRows[0] ? currentCsvRows[0].length : 0;
+        if (csvStats) {
+          csvStats.textContent = `${rowCount} row${rowCount === 1 ? "" : "s"} × ${colCount} col${colCount === 1 ? "" : "s"} • ${formatSize(byteSize)}`;
+        }
+        renderCsvTable();
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        if (csvTableContainer) {
+          csvTableContainer.innerHTML = `<div class="error-state"><div class="error-icon">⚠️</div><h2>Error loading dataset</h2><p>${escapeHtml(err.message)}</p></div>`;
+        }
       } finally {
         viewerLoading.classList.add("loaded");
       }
@@ -2454,6 +3072,75 @@
     });
   }
 
+  // ── Jupyter Notebook Toolbar Controls ───────────────────
+  if (nbRawToggle) {
+    nbRawToggle.addEventListener("click", () => {
+      if (!currentNotebookData) return;
+      isNotebookRaw = !isNotebookRaw;
+      if (isNotebookRaw) {
+        nbRawToggle.textContent = "📓 Rendered";
+        if (notebookBody) {
+          notebookBody.innerHTML = `<div class="md-code-block"><pre><code class="lang-json">${escapeHtml(currentRawText)}</code></pre></div>`;
+        }
+      } else {
+        nbRawToggle.textContent = "💻 Raw JSON";
+        const rendered = renderNotebook(currentNotebookData, currentBaseRawUrl);
+        if (notebookBody) notebookBody.innerHTML = rendered.html;
+      }
+    });
+  }
+
+  if (copyNbCodeBtn) {
+    copyNbCodeBtn.addEventListener("click", () => {
+      const codeToCopy = currentNotebookCode || currentRawText;
+      if (!codeToCopy) return;
+      copyToClipboard(codeToCopy).then((ok) => {
+        if (ok) {
+          const orig = copyNbCodeBtn.textContent;
+          copyNbCodeBtn.textContent = "✓ Copied!";
+          showToast("All notebook code cells copied!");
+          setTimeout(() => { copyNbCodeBtn.textContent = orig; }, 2000);
+        }
+      });
+    });
+  }
+
+  // ── CSV / TSV Toolbar Controls ──────────────────────────
+  if (csvFilterInput) {
+    csvFilterInput.addEventListener("input", () => {
+      if (!isCsvRaw) renderCsvTable();
+    });
+  }
+
+  if (csvRawToggle) {
+    csvRawToggle.addEventListener("click", () => {
+      isCsvRaw = !isCsvRaw;
+      if (isCsvRaw) {
+        csvRawToggle.textContent = "📊 Table View";
+        if (csvTableContainer) {
+          csvTableContainer.innerHTML = `<div style="padding:18px;"><pre style="font-family:var(--font-mono);font-size:0.84rem;white-space:pre-wrap;color:var(--text);"><code>${escapeHtml(currentRawText)}</code></pre></div>`;
+        }
+      } else {
+        csvRawToggle.textContent = "💻 Raw Text";
+        renderCsvTable();
+      }
+    });
+  }
+
+  if (copyCsvBtn) {
+    copyCsvBtn.addEventListener("click", () => {
+      if (!currentRawText) return;
+      copyToClipboard(currentRawText).then((ok) => {
+        if (ok) {
+          const orig = copyCsvBtn.textContent;
+          copyCsvBtn.textContent = "✓ Copied!";
+          showToast("CSV data copied to clipboard!");
+          setTimeout(() => { copyCsvBtn.textContent = orig; }, 2000);
+        }
+      });
+    });
+  }
+
   // ── Code Wrap Toggle ────────────────────────────────────
   if (codeWrapToggle) {
     codeWrapToggle.addEventListener("click", () => {
@@ -2594,9 +3281,25 @@
     }
   });
 
-  // ── Keyboard Shortcuts (/, Ctrl+K, Escape, Arrows) ─────
+  // ── Keyboard Shortcuts (/, Ctrl+K, ?, Alt+T, Escape, Arrows) ─
   window.addEventListener("keydown", (e) => {
     const isInput = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
+
+    // Alt+T cycles reading theme
+    if (e.altKey && (e.key === "t" || e.key === "T")) {
+      e.preventDefault();
+      cycleTheme();
+      return;
+    }
+
+    // '?' opens Keyboard Shortcuts Cheat-Sheet Modal
+    if (e.key === "?" && !isInput && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      if (shortcutsOverlay) {
+        shortcutsOverlay.classList.toggle("hidden");
+      }
+      return;
+    }
 
     // '/' or 'Ctrl+K' / 'Cmd+K' focuses search or home repo input
     if ((e.key === "/" && !isInput) || ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K"))) {
@@ -2617,6 +3320,10 @@
           searchInput.value = "";
           searchInput.dispatchEvent(new Event("input"));
         }
+        return;
+      }
+      if (shortcutsOverlay && !shortcutsOverlay.classList.contains("hidden")) {
+        shortcutsOverlay.classList.add("hidden");
         return;
       }
       if (offlineOverlay && !offlineOverlay.classList.contains("hidden")) {
@@ -2722,7 +3429,7 @@
     devOverlay.classList.add("hidden");
   }
 
-  // ── Smart Multi-Platform URL / Shorthand Parser ────────
+  // ── Smart Multi-Platform URL / Shorthand Parser (with Deep Subpath Extraction) ──
   function parseRepoUrl(input) {
     let str = (input || "").trim();
     if (!str) return null;
@@ -2750,7 +3457,13 @@
       try {
         const url = new URL(str);
         const host = url.hostname.toLowerCase();
-        let pathSegments = url.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+        let pathSegments = url.pathname
+          .replace(/^\/+|\/+$/g, "")
+          .split("/")
+          .filter(Boolean)
+          .map((s) => {
+            try { return decodeURIComponent(s); } catch { return s; }
+          });
         if (pathSegments.length > 0 && pathSegments[pathSegments.length - 1].endsWith(".git")) {
           pathSegments[pathSegments.length - 1] = pathSegments[pathSegments.length - 1].replace(/\.git$/, "");
         }
@@ -2760,27 +3473,43 @@
           const owner = pathSegments[0];
           const name = pathSegments[1];
           let branch = "HEAD";
-          if (pathSegments[2] === "tree" && pathSegments[3]) {
+          let subPath = "";
+          let subType = "";
+          if ((pathSegments[2] === "tree" || pathSegments[2] === "blob") && pathSegments[3]) {
+            subType = pathSegments[2];
             branch = pathSegments[3];
+            if (pathSegments.length > 4) {
+              subPath = pathSegments.slice(4).join("/");
+            }
           }
-          return { platform: "github", host, owner, name, branch };
+          const res = { platform: "github", host, owner, name, branch };
+          if (subPath) { res.subPath = subPath; res.subType = subType; }
+          return res;
         }
 
         if (host === "gitlab.com") {
           if (pathSegments.length < 2) return null;
           const dashIdx = pathSegments.indexOf("-");
           let branch = "HEAD";
+          let subPath = "";
+          let subType = "";
           let projectSegments = pathSegments;
           if (dashIdx !== -1) {
             projectSegments = pathSegments.slice(0, dashIdx);
-            if (pathSegments[dashIdx + 1] === "tree" && pathSegments[dashIdx + 2]) {
+            if ((pathSegments[dashIdx + 1] === "tree" || pathSegments[dashIdx + 1] === "blob") && pathSegments[dashIdx + 2]) {
+              subType = pathSegments[dashIdx + 1];
               branch = pathSegments[dashIdx + 2];
+              if (pathSegments.length > dashIdx + 3) {
+                subPath = pathSegments.slice(dashIdx + 3).join("/");
+              }
             }
           }
           if (projectSegments.length < 2) return null;
           const name = projectSegments[projectSegments.length - 1];
           const owner = projectSegments.slice(0, -1).join("/");
-          return { platform: "gitlab", host, owner, name, branch };
+          const res = { platform: "gitlab", host, owner, name, branch };
+          if (subPath) { res.subPath = subPath; res.subType = subType; }
+          return res;
         }
 
         if (host === "codeberg.org") {
@@ -2788,10 +3517,16 @@
           const owner = pathSegments[0];
           const name = pathSegments[1];
           let branch = "HEAD";
+          let subPath = "";
           if (pathSegments[2] === "src" && pathSegments[3] === "branch" && pathSegments[4]) {
             branch = pathSegments[4];
+            if (pathSegments.length > 5) {
+              subPath = pathSegments.slice(5).join("/");
+            }
           }
-          return { platform: "codeberg", host, owner, name, branch };
+          const res = { platform: "codeberg", host, owner, name, branch };
+          if (subPath) res.subPath = subPath;
+          return res;
         }
 
         if (host === "bitbucket.org") {
@@ -2799,10 +3534,16 @@
           const owner = pathSegments[0];
           const name = pathSegments[1];
           let branch = "HEAD";
+          let subPath = "";
           if (pathSegments[2] === "src" && pathSegments[3]) {
             branch = pathSegments[3];
+            if (pathSegments.length > 4) {
+              subPath = pathSegments.slice(4).join("/");
+            }
           }
-          return { platform: "bitbucket", host, owner, name, branch };
+          const res = { platform: "bitbucket", host, owner, name, branch };
+          if (subPath) res.subPath = subPath;
+          return res;
         }
 
         if (pathSegments.length >= 2) {
@@ -2828,14 +3569,42 @@
     return null;
   }
 
-  function loadCustomRepo(parsedRepo) {
+  async function loadCustomRepo(parsedRepo) {
     if (searchInput) searchInput.value = "";
-    currentRepo = parsedRepo;
-    saveRecentRepo(parsedRepo);
+    currentRepo = {
+      platform: parsedRepo.platform,
+      host: parsedRepo.host,
+      owner: parsedRepo.owner,
+      name: parsedRepo.name,
+      branch: parsedRepo.branch || "HEAD"
+    };
+    saveRecentRepo(currentRepo);
     updateRepoUI();
-    const platInfo = PLATFORMS[parsedRepo.platform] || { icon: "📁" };
-    showToast(`Loaded ${platInfo.icon} ${parsedRepo.owner}/${parsedRepo.name}`);
-    fetchRepoTree(parsedRepo).catch(() => {});
+    const platInfo = PLATFORMS[currentRepo.platform] || { icon: "📁" };
+    showToast(`Loaded ${platInfo.icon} ${currentRepo.owner}/${currentRepo.name}`);
+    fetchRepoTree(currentRepo).catch(() => {});
+
+    // If user pasted a deep link to a specific file or subfolder, route directly to it
+    if (parsedRepo.subPath) {
+      const subPath = parsedRepo.subPath.replace(/^\/+|\/+$/g, "");
+      if (parsedRepo.subType === "blob" || getFileExt(subPath)) {
+        const parentFolder = subPath.includes("/") ? subPath.substring(0, subPath.lastIndexOf("/")) : "";
+        const fileName = subPath.includes("/") ? subPath.substring(subPath.lastIndexOf("/") + 1) : subPath;
+        try {
+          const items = await fetchContents(parentFolder);
+          currentItems = Array.isArray(items) ? items : [];
+          sortItemsList(currentItems);
+          const target = currentItems.find((it) => it.path === subPath || it.name.toLowerCase() === fileName.toLowerCase());
+          if (target && isViewable(target.name)) {
+            openViewer(target, true);
+            return;
+          }
+        } catch {}
+      }
+      navigateTo(subPath);
+      return;
+    }
+
     navigateTo("");
   }
 
@@ -2987,6 +3756,7 @@
     toolbar.classList.add("hidden");
     contentLoader.classList.add("hidden");
     document.body.classList.add("home-mode");
+    updatePageTitle();
     updateOfflineUI();
 
     if (homeScreen) homeScreen.classList.remove("hidden");
