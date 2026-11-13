@@ -1,15 +1,15 @@
 /* =========================================================
-   Service Worker – Study Portal PWA (v8)
+   Service Worker – Study Portal PWA (v9)
    Two-Tier Caching: App Shell + Offline Repository Data Cache
    ========================================================= */
 
-const SHELL_CACHE = "studyportal-shell-v8";
+const SHELL_CACHE = "studyportal-shell-v9";
 const DATA_CACHE = "studyportal-data-v7";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/style.css?v=8",
-  "/app.js?v=8",
+  "/style.css?v=9",
+  "/app.js?v=9",
   "/manifest.json",
   "/icons/icon-192.png",
   "/icons/icon-512.png"
@@ -86,7 +86,15 @@ self.addEventListener("fetch", (e) => {
           }
           return res;
         })
-        .catch(() => caches.match(e.request) || caches.match("/index.html"))
+        .catch(async () => {
+          const cached = await caches.match(e.request);
+          if (cached) return cached;
+          if (e.request.mode === "navigate") {
+            const shell = await caches.match("/index.html");
+            if (shell) return shell;
+          }
+          throw new Error("Offline and not in shell cache");
+        })
     );
   }
 });

@@ -96,24 +96,34 @@
       async fetchContents(repo, path) {
         const host = repo.host || "gitlab.com";
         const projectId = encodeURIComponent(`${repo.owner}/${repo.name}`);
-        const params = new URLSearchParams({ per_page: "100" });
-        if (path) params.set("path", path);
-        if (repo.branch && repo.branch !== "HEAD") params.set("ref", repo.branch);
+        const branch = repo.branch || "HEAD";
+        const allData = [];
+        let page = 1;
 
-        const url = `https://${host}/api/v4/projects/${projectId}/repository/tree?${params.toString()}`;
-        const res = await fetch(url);
+        while (page <= 5) {
+          const params = new URLSearchParams({ per_page: "100", page: String(page) });
+          if (path) params.set("path", path);
+          if (repo.branch && repo.branch !== "HEAD") params.set("ref", repo.branch);
 
-        if (!res.ok) {
-          if (res.status === 404) {
-            throw new Error(`Repository or folder not found on GitLab (${repo.owner}/${repo.name}). Public repos only.`);
+          const url = `https://${host}/api/v4/projects/${projectId}/repository/tree?${params.toString()}`;
+          const res = await fetch(url);
+
+          if (!res.ok) {
+            if (res.status === 404) {
+              throw new Error(`Repository or folder not found on GitLab (${repo.owner}/${repo.name}). Public repos only.`);
+            }
+            throw new Error(`GitLab returned ${res.status}: ${res.statusText}`);
           }
-          throw new Error(`GitLab returned ${res.status}: ${res.statusText}`);
+
+          const data = await res.json();
+          if (!Array.isArray(data) || data.length === 0) break;
+          allData.push(...data);
+          const nextPage = res.headers.get("x-next-page");
+          if (!nextPage) break;
+          page = parseInt(nextPage, 10) || (page + 1);
         }
 
-        const data = await res.json();
-        if (!Array.isArray(data)) return [];
-        const branch = repo.branch || "HEAD";
-        return data.map((item) => ({
+        return allData.map((item) => ({
           name: item.name,
           path: item.path,
           type: item.type === "tree" ? "dir" : "file",
@@ -325,6 +335,9 @@
   const sortSizeBtn = document.getElementById("sortSizeBtn");
   const sortTypeBtn = document.getElementById("sortTypeBtn");
   const viewModeToggleBtn = document.getElementById("viewModeToggleBtn");
+  const folderRefreshBtn = document.getElementById("folderRefreshBtn");
+  const refreshRepoBtn = document.getElementById("refreshRepoBtn");
+  const themeColorMeta = document.getElementById("themeColorMeta");
   const printMdBtn = document.getElementById("printMdBtn");
   const notebookViewer = document.getElementById("notebookViewer");
   const nbStats = document.getElementById("nbStats");
@@ -341,11 +354,13 @@
   // ── State ───────────────────────────────────────────────
   const THEME_KEY = "studyportal_theme";
   const VIEW_MODE_KEY = "studyportal_view_mode";
+  const TREE_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
   let currentPath = "";
   let currentItems = [];
   let currentFile = null;
   let currentRawText = "";
   let currentBaseRawUrl = "";
+  let currentMediaObjectUrl = null;
   let repoTreeCache = {}; // Keyed by platform_host_owner_name_branch
   let inFlightTrees = {}; // Prevents duplicate parallel requests on boot
   let currentDocEngine = "google"; // "google" | "office" | "native"
@@ -683,9 +698,7 @@
       showToast("⭐ Pinned to resources!");
     }
 
-    try {
-      localStorage.setItem(STARRED_KEY, JSON.stringify(list.slice(0, 20)));
-    } catch {}
+    safeSetStorage(STARRED_KEY, JSON.stringify(list.slice(0, 20)));
 
     updateStarredUI();
     return nowStarred;
@@ -757,7 +770,30 @@
     });
   }
 
-  // ── Offline Caching & Saved Library Manager ─────────────
+  // ── Quota-Safe Storage & Offline Caching Manager ───────
+  function safeSetStorage(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      try {
+        // Evict cached repo trees and folder listings to free quota for user data
+        const evictKeys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith("studyportal_tree_") || k.startsWith(CACHE_PREFIX)) && k !== key) {
+            evictKeys.push(k);
+          }
+        }
+        evictKeys.forEach((k) => localStorage.removeItem(k));
+        localStorage.setItem(key, value);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
   function getOfflineMeta() {
     try {
       const raw = localStorage.getItem(OFFLINE_META_KEY);
@@ -769,9 +805,7 @@
   }
 
   function setOfflineMeta(list) {
-    try {
-      localStorage.setItem(OFFLINE_META_KEY, JSON.stringify(list));
-    } catch {}
+    safeSetStorage(OFFLINE_META_KEY, JSON.stringify(list));
     updateOfflineUI();
   }
 
@@ -794,6 +828,55 @@
       savedAt: Date.now()
     });
     setOfflineMeta(list.slice(0, 150));
+  }
+
+  async function cacheResponseAndRecordOffline(item, responseClone, byteSize = 0) {
+    if (!item || !item.download_url || !("caches" in window)) return false;
+    if (byteSize > 5 * 1024 * 1024) return false;
+    try {
+      const cache = await caches.open(OFFLINE_CACHE_NAME);
+      if (responseClone && responseClone.status === 200) {
+        await cache.put(item.download_url, responseClone);
+        recordFileOffline(item, byteSize);
+        return true;
+      }
+      const existing = await cache.match(item.download_url);
+      if (existing) {
+        recordFileOffline(item, byteSize);
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  async function syncIfCachedOffline(item, byteSize = 0) {
+    if (!item || !item.download_url || !("caches" in window)) return false;
+    try {
+      const cache = await caches.open(OFFLINE_CACHE_NAME);
+      const matched = await cache.match(item.download_url);
+      if (matched) {
+        recordFileOffline(item, byteSize);
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  async function fetchWithOfflineFallback(url, options = {}) {
+    try {
+      const res = await fetch(url, options);
+      return res;
+    } catch (err) {
+      if (err && err.name === "AbortError") throw err;
+      if ("caches" in window) {
+        try {
+          const cache = await caches.open(OFFLINE_CACHE_NAME);
+          const cached = await cache.match(url);
+          if (cached) return cached;
+        } catch {}
+      }
+      throw err;
+    }
   }
 
   async function saveFileToOfflineCache(item) {
@@ -996,6 +1079,12 @@
       document.documentElement.removeAttribute("data-theme");
     } else {
       document.documentElement.setAttribute("data-theme", validTheme);
+    }
+    if (themeColorMeta) {
+      themeColorMeta.setAttribute(
+        "content",
+        validTheme === "light" ? "#ffffff" : validTheme === "sepia" ? "#f8f4e8" : "#0d1117"
+      );
     }
     if (themeToggleBtn) {
       themeToggleBtn.textContent = validTheme === "light" ? "☀️" : validTheme === "sepia" ? "📜" : "🌙";
@@ -1347,25 +1436,35 @@
   sidebarOverlay.addEventListener("click", closeSidebar);
 
   // ── Multi-Platform Recursive Tree API (1 Request for entire repo) ──
-  async function fetchRepoTree(repo) {
+  function parseTreeCacheEntry(raw) {
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return { timestamp: 0, items: parsed };
+      }
+      if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
+        return { timestamp: parsed.timestamp || 0, items: parsed.items };
+      }
+    } catch {}
+    return null;
+  }
+
+  async function fetchRepoTree(repo, forceRefresh = false) {
     const branch = repo.branch || "HEAD";
     const treeKey = `${repo.platform}_${repo.host}_${repo.owner}_${repo.name}_${branch}`;
 
-    if (repoTreeCache[treeKey]) return repoTreeCache[treeKey];
-    if (inFlightTrees[treeKey]) return inFlightTrees[treeKey];
+    if (!forceRefresh && repoTreeCache[treeKey]) return repoTreeCache[treeKey];
+    if (!forceRefresh && inFlightTrees[treeKey]) return inFlightTrees[treeKey];
 
     const cacheKey = `studyportal_tree_${treeKey}`;
-    const cached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          repoTreeCache[treeKey] = parsed;
-          return parsed;
-        }
-      } catch {
-        localStorage.removeItem(cacheKey);
-        sessionStorage.removeItem(cacheKey);
+    const cachedRaw = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
+    const cachedEntry = parseTreeCacheEntry(cachedRaw);
+    if (!forceRefresh && cachedEntry) {
+      const isFresh = cachedEntry.timestamp > 0 && (Date.now() - cachedEntry.timestamp) < TREE_CACHE_TTL;
+      if (isFresh || !navigator.onLine) {
+        repoTreeCache[treeKey] = cachedEntry.items;
+        return cachedEntry.items;
       }
     }
 
@@ -1406,65 +1505,97 @@
                 });
 
               repoTreeCache[treeKey] = items;
-              try { localStorage.setItem(cacheKey, JSON.stringify(items)); } catch {}
+              safeSetStorage(cacheKey, JSON.stringify({ timestamp: Date.now(), items }));
               return items;
             }
           }
         }
 
-        // 2. GitLab Recursive Tree
+        // 2. GitLab Recursive Tree (paginated up to 10 pages / 1000 entries)
         if (repo.platform === "gitlab") {
           const host = repo.host || "gitlab.com";
           const projectId = encodeURIComponent(`${repo.owner}/${repo.name}`);
-          const params = new URLSearchParams({ recursive: "true", per_page: "100" });
-          if (branch !== "HEAD") params.set("ref", branch);
+          const allEntries = [];
+          let page = 1;
+          let ok = false;
 
-          const res = await fetch(`https://${host}/api/v4/projects/${projectId}/repository/tree?${params}`);
-          if (res.ok) {
+          while (page <= 10) {
+            const params = new URLSearchParams({ recursive: "true", per_page: "100", page: String(page) });
+            if (branch !== "HEAD") params.set("ref", branch);
+
+            const res = await fetch(`https://${host}/api/v4/projects/${projectId}/repository/tree?${params}`);
+            if (!res.ok) break;
+            ok = true;
             const data = await res.json();
-            if (Array.isArray(data) && data.length < 100) {
-              const items = data
-                .filter((it) => !it.path.split("/").some((seg) => seg.startsWith(".")))
-                .map((it) => {
-                  const safePath = it.path.split("/").map(encodeURIComponent).join("/");
-                  return {
-                    name: it.name,
-                    path: it.path,
-                    type: it.type === "tree" ? "dir" : "file",
-                    size: null,
-                    download_url:
-                      it.type === "tree"
-                        ? null
-                        : `https://${host}/${repo.owner}/${repo.name}/-/raw/${branch}/${safePath}`
-                  };
-                });
+            if (!Array.isArray(data) || data.length === 0) break;
+            allEntries.push(...data);
+            const nextPage = res.headers.get("x-next-page");
+            if (!nextPage) break;
+            page = parseInt(nextPage, 10) || (page + 1);
+          }
 
-              repoTreeCache[treeKey] = items;
-              try { localStorage.setItem(cacheKey, JSON.stringify(items)); } catch {}
-              return items;
-            }
+          if (ok && allEntries.length > 0 && page <= 10) {
+            const items = allEntries
+              .filter((it) => !it.path.split("/").some((seg) => seg.startsWith(".")))
+              .map((it) => {
+                const safePath = it.path.split("/").map(encodeURIComponent).join("/");
+                return {
+                  name: it.name,
+                  path: it.path,
+                  type: it.type === "tree" ? "dir" : "file",
+                  size: null,
+                  download_url:
+                    it.type === "tree"
+                      ? null
+                      : `https://${host}/${repo.owner}/${repo.name}/-/raw/${branch}/${safePath}`
+                };
+              });
+
+            repoTreeCache[treeKey] = items;
+            safeSetStorage(cacheKey, JSON.stringify({ timestamp: Date.now(), items }));
+            return items;
           }
         }
       } catch {
-        // Fall back silently to per-folder adapter or offline localStorage
-        const offlineCached = localStorage.getItem(cacheKey);
-        if (offlineCached) {
-          try {
-            const parsed = JSON.parse(offlineCached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              repoTreeCache[treeKey] = parsed;
-              return parsed;
-            }
-          } catch {}
-        }
+        // Fall through to stale cache fallback below
       } finally {
         delete inFlightTrees[treeKey];
+      }
+
+      if (cachedEntry && cachedEntry.items.length > 0) {
+        repoTreeCache[treeKey] = cachedEntry.items;
+        return cachedEntry.items;
       }
       return null;
     })();
 
     return inFlightTrees[treeKey];
   }
+
+  async function refreshCurrentRepo() {
+    if (document.body.classList.contains("home-mode")) return;
+    const branch = currentRepo.branch || "HEAD";
+    const treeKey = `${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${branch}`;
+    delete repoTreeCache[treeKey];
+    try {
+      localStorage.removeItem(`studyportal_tree_${treeKey}`);
+      sessionStorage.removeItem(`studyportal_tree_${treeKey}`);
+      localStorage.removeItem(`${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentPath}`);
+      sessionStorage.removeItem(`${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${currentPath}`);
+    } catch {}
+
+    closeSidebar();
+    showToast("🔄 Refreshing repository…");
+    await fetchRepoTree(currentRepo, true).catch(() => {});
+    if (currentFile) {
+      await openViewer(currentFile, false);
+    } else {
+      await navigateTo(currentPath, false);
+    }
+  }
+
+  if (refreshRepoBtn) refreshRepoBtn.addEventListener("click", refreshCurrentRepo);
+  if (folderRefreshBtn) folderRefreshBtn.addEventListener("click", refreshCurrentRepo);
 
   // ── API fetch with caching & tree fallback ──────────────
   async function fetchContents(path = "") {
@@ -1485,7 +1616,7 @@
 
     const cacheKey = `${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${path}`;
     const cached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
-    if (cached) {
+    if (cached && !navigator.onLine) {
       try {
         return JSON.parse(cached);
       } catch {
@@ -1500,14 +1631,12 @@
       const cleaned = (items || []).filter((item) => !item.name.startsWith("."));
 
       if (Array.isArray(cleaned)) {
-        try {
-          localStorage.setItem(cacheKey, JSON.stringify(cleaned));
-        } catch { /* storage quota */ }
+        safeSetStorage(cacheKey, JSON.stringify(cleaned));
       }
       return cleaned;
     } catch (err) {
-      // Offline fallback: try returning any cached folder contents
-      const offlineCached = localStorage.getItem(cacheKey);
+      // Offline / error fallback: try returning any cached folder contents
+      const offlineCached = localStorage.getItem(cacheKey) || sessionStorage.getItem(cacheKey);
       if (offlineCached) {
         try { return JSON.parse(offlineCached); } catch {}
       }
@@ -1613,6 +1742,10 @@
         mediaAudio.load?.();
       } catch {}
     }
+    if (currentMediaObjectUrl) {
+      try { URL.revokeObjectURL(currentMediaObjectUrl); } catch {}
+      currentMediaObjectUrl = null;
+    }
     if (viewerFrame) {
       viewerFrame.src = "about:blank";
       viewerFrame.classList.add("hidden");
@@ -1636,6 +1769,13 @@
     errorState.classList.add("hidden");
     emptyState.classList.add("hidden");
     viewerFallback.classList.add("hidden");
+  }
+
+  function clearSearchFilter() {
+    if (searchInput && searchInput.value) {
+      searchInput.value = "";
+    }
+    fileTree.querySelectorAll(".tree-item").forEach((el) => el.classList.remove("hidden"));
   }
 
   function clearFileCards() {
@@ -1689,7 +1829,7 @@
 
       card.addEventListener("click", () => {
         if (isSearchResult) {
-          searchInput.value = "";
+          clearSearchFilter();
         }
         handleItemClick(item);
       });
@@ -1698,7 +1838,7 @@
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           if (isSearchResult) {
-            searchInput.value = "";
+            clearSearchFilter();
           }
           handleItemClick(item);
         }
@@ -1723,7 +1863,7 @@
         folderReadmeSection.classList.remove("hidden");
         if (folderReadmeTitle) folderReadmeTitle.textContent = readmeItem.name;
         folderReadmeBody.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span>Loading README…</span></div>';
-        fetch(readmeItem.download_url)
+        fetchWithOfflineFallback(readmeItem.download_url)
           .then((r) => {
             if (!r.ok) throw new Error("Failed to load README");
             return r.text();
@@ -1920,13 +2060,13 @@
 
     function flushTable() {
       if (inTable && tableRows.length > 0) {
-        let tableHtml = "<table>";
+        let tableHtml = '<div class="md-table-wrap"><table>';
         const headerCells = tableRows[0];
         tableHtml += "<thead><tr>" + headerCells.map((c) => `<th>${formatInline(c)}</th>`).join("") + "</tr></thead><tbody>";
         for (let r = 1; r < tableRows.length; r++) {
           tableHtml += "<tr>" + tableRows[r].map((c) => `<td>${formatInline(c)}</td>`).join("") + "</tr>";
         }
-        tableHtml += "</tbody></table>";
+        tableHtml += "</tbody></table></div>";
         htmlParts.push(tableHtml);
         inTable = false;
         tableRows = [];
@@ -2068,11 +2208,14 @@
         const type = isUl ? "ul" : "ol";
         const indent = (ulMatch || olMatch)[1].length;
         let content = (ulMatch || olMatch)[2];
+        let checkboxPrefix = "";
 
         if (content.startsWith("[ ] ")) {
-          content = '<input type="checkbox" disabled /> ' + content.slice(4);
+          checkboxPrefix = '<input type="checkbox" class="md-task-checkbox" disabled /> ';
+          content = content.slice(4);
         } else if (content.startsWith("[x] ") || content.startsWith("[X] ")) {
-          content = '<input type="checkbox" checked disabled /> ' + content.slice(4);
+          checkboxPrefix = '<input type="checkbox" class="md-task-checkbox" checked disabled /> ';
+          content = content.slice(4);
         }
 
         if (listStack.length === 0) {
@@ -2095,7 +2238,8 @@
             htmlParts.push(`<${type}>`);
           }
         }
-        htmlParts.push(`<li>${formatInline(content)}</li>`);
+        const liClass = checkboxPrefix ? ' class="task-list-item"' : "";
+        htmlParts.push(`<li${liClass}>${checkboxPrefix}${formatInline(content)}</li>`);
         continue;
       }
 
@@ -2221,7 +2365,7 @@
           ? parseMarkdown(sourceText, baseRawUrl).html
           : `<pre><code>${escapeHtml(sourceText)}</code></pre>`;
         htmlParts.push(`
-          <div class="nb-cell nb-cell-markdown">
+          <div class="nb-cell nb-cell-md">
             <div class="nb-md-content markdown-body">${renderedMd}</div>
           </div>
         `);
@@ -2255,11 +2399,15 @@
           } else if (outType === "execute_result" || outType === "display_data") {
             const data = out.data || {};
             if (data["image/png"]) {
-              const b64 = normalizeNbLines(data["image/png"]).replace(/\s+/g, "");
-              outParts.push(`<div class="nb-output-plot"><img class="nb-output-img" src="data:image/png;base64,${b64}" alt="Notebook Plot" /></div>`);
+              const b64 = normalizeNbLines(data["image/png"]).replace(/[^A-Za-z0-9+/=]/g, "");
+              if (b64) {
+                outParts.push(`<div class="nb-output-plot"><img class="nb-output-img" src="data:image/png;base64,${b64}" alt="Notebook Plot" /></div>`);
+              }
             } else if (data["image/jpeg"]) {
-              const b64 = normalizeNbLines(data["image/jpeg"]).replace(/\s+/g, "");
-              outParts.push(`<div class="nb-output-plot"><img class="nb-output-img" src="data:image/jpeg;base64,${b64}" alt="Notebook Plot" /></div>`);
+              const b64 = normalizeNbLines(data["image/jpeg"]).replace(/[^A-Za-z0-9+/=]/g, "");
+              if (b64) {
+                outParts.push(`<div class="nb-output-plot"><img class="nb-output-img" src="data:image/jpeg;base64,${b64}" alt="Notebook Plot" /></div>`);
+              }
             } else if (data["text/markdown"]) {
               const mdText = normalizeNbLines(data["text/markdown"]);
               outParts.push(`<div class="nb-output-md markdown-body">${parseMarkdown(mdText, baseRawUrl).html}</div>`);
@@ -2281,7 +2429,7 @@
               <span class="nb-cell-lang">${escapeHtml(lang.toUpperCase())}</span>
               <button type="button" class="md-code-copy-btn" title="Copy cell code">📋 Copy Cell</button>
             </div>
-            <div class="nb-code-area"><pre><code class="lang-${escapeHtml(syntaxExt)}">${highlightedCode || "&nbsp;"}</code></pre></div>
+            <div class="nb-code-area"><pre class="nb-code-pre"><code class="lang-${escapeHtml(syntaxExt)}">${highlightedCode || "&nbsp;"}</code></pre></div>
             ${outputsHtml}
           </div>
         `);
@@ -2381,7 +2529,7 @@
     const maxDisplay = 1500;
     const displayRows = dataRows.slice(0, maxDisplay);
 
-    let html = `<table class="csv-data-table"><thead><tr><th class="csv-row-index">#</th>`;
+    let html = `<table class="csv-data-table"><thead><tr><th class="csv-row-num">#</th>`;
     headers.forEach((h, colIdx) => {
       const isSorted = csvSortCol === colIdx;
       const sortArrow = isSorted ? (csvSortAsc ? " ↑" : " ↓") : "";
@@ -2390,7 +2538,7 @@
     html += `</tr></thead><tbody>`;
 
     displayRows.forEach((row, rIdx) => {
-      html += `<tr><td class="csv-row-index">${rIdx + 1}</td>`;
+      html += `<tr><td class="csv-row-num">${rIdx + 1}</td>`;
       for (let c = 0; c < headers.length; c++) {
         html += `<td>${escapeHtml(row[c] ?? "")}</td>`;
       }
@@ -2438,6 +2586,9 @@
         if (target) {
           target.scrollIntoView({ behavior: "smooth", block: "start" });
           history.replaceState(null, "", `#${h.slug}`);
+        }
+        if (window.innerWidth <= 768 && markdownToc) {
+          markdownToc.classList.add("hidden");
         }
       });
       tocList.appendChild(a);
@@ -2552,11 +2703,13 @@
       markdownBody.innerHTML = "";
 
       try {
-        const res = await fetch(item.download_url, { signal: fetchSignal });
+        const res = await fetchWithOfflineFallback(item.download_url, { signal: fetchSignal });
         if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch notes.`);
+        const resClone = res.status === 200 ? res.clone() : null;
         const text = await res.text();
         currentRawText = text;
-        recordFileOffline(item, new Blob([text]).size);
+        const byteSize = new Blob([text]).size;
+        cacheResponseAndRecordOffline(item, resClone, byteSize);
 
         const wordCount = text.trim().split(/\s+/).length;
         const readMin = Math.max(1, Math.ceil(wordCount / 200));
@@ -2588,12 +2741,13 @@
       if (notebookBody) notebookBody.innerHTML = "";
 
       try {
-        const res = await fetch(item.download_url, { signal: fetchSignal });
+        const res = await fetchWithOfflineFallback(item.download_url, { signal: fetchSignal });
         if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch notebook.`);
+        const resClone = res.status === 200 ? res.clone() : null;
         const text = await res.text();
         currentRawText = text;
         const byteSize = new Blob([text]).size;
-        recordFileOffline(item, byteSize);
+        cacheResponseAndRecordOffline(item, resClone, byteSize);
 
         const nbJson = JSON.parse(text);
         currentNotebookData = nbJson;
@@ -2633,12 +2787,13 @@
       if (csvRawToggle) csvRawToggle.textContent = "💻 Raw Text";
 
       try {
-        const res = await fetch(item.download_url, { signal: fetchSignal });
+        const res = await fetchWithOfflineFallback(item.download_url, { signal: fetchSignal });
         if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch dataset.`);
+        const resClone = res.status === 200 ? res.clone() : null;
         const text = await res.text();
         currentRawText = text;
         const byteSize = new Blob([text]).size;
-        recordFileOffline(item, byteSize);
+        cacheResponseAndRecordOffline(item, resClone, byteSize);
 
         const delim = ext === "tsv" ? "\t" : ",";
         currentCsvRows = parseCsvOrTsv(text, delim);
@@ -2670,6 +2825,7 @@
       viewerLoading.classList.remove("loaded");
 
       resetImageZoom();
+      let triedOfflineBlob = false;
       mediaImage.setAttribute("crossorigin", "anonymous");
       mediaImage.src = item.download_url;
       imageInfo.textContent = "Loading image…";
@@ -2680,14 +2836,28 @@
         const h = mediaImage.naturalHeight;
         const sizeStr = item.size ? ` • ${formatSize(item.size)}` : "";
         imageInfo.textContent = `${w} × ${h} px${sizeStr}`;
-        recordFileOffline(item, item.size || 0);
+        syncIfCachedOffline(item, item.size || 0);
       };
 
-      mediaImage.onerror = () => {
+      mediaImage.onerror = async () => {
         if (mediaImage.hasAttribute("crossorigin")) {
           mediaImage.removeAttribute("crossorigin");
           mediaImage.src = item.download_url;
           return;
+        }
+        if (!triedOfflineBlob && "caches" in window) {
+          triedOfflineBlob = true;
+          try {
+            const cache = await caches.open(OFFLINE_CACHE_NAME);
+            const cached = await cache.match(item.download_url);
+            if (cached) {
+              const blob = await cached.blob();
+              if (currentMediaObjectUrl) URL.revokeObjectURL(currentMediaObjectUrl);
+              currentMediaObjectUrl = URL.createObjectURL(blob);
+              mediaImage.src = currentMediaObjectUrl;
+              return;
+            }
+          } catch {}
         }
         viewerLoading.classList.add("loaded");
         imageInfo.textContent = "Error loading image";
@@ -2708,7 +2878,11 @@
 
       mediaVideo.src = item.download_url;
       mediaVideo.onloadeddata = () => {
-        recordFileOffline(item, item.size || 0);
+        viewerLoading.classList.add("loaded");
+        syncIfCachedOffline(item, item.size || 0);
+      };
+      mediaVideo.onerror = () => {
+        viewerLoading.classList.add("loaded");
       };
       mediaVideo.play().catch(() => {});
       closeSidebar();
@@ -2728,7 +2902,11 @@
       audioSub.textContent = `Audio lecture file • ${formatSize(item.size)}`;
       mediaAudio.src = item.download_url;
       mediaAudio.onloadeddata = () => {
-        recordFileOffline(item, item.size || 0);
+        viewerLoading.classList.add("loaded");
+        syncIfCachedOffline(item, item.size || 0);
+      };
+      mediaAudio.onerror = () => {
+        viewerLoading.classList.add("loaded");
       };
       mediaAudio.play().catch(() => {});
       closeSidebar();
@@ -2747,10 +2925,11 @@
       codeLines.innerHTML = "";
 
       try {
-        const res = await fetch(item.download_url, { signal: fetchSignal });
+        const res = await fetchWithOfflineFallback(item.download_url, { signal: fetchSignal });
         if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch file.`);
+        const resClone = res.status === 200 ? res.clone() : null;
         const buffer = await res.arrayBuffer();
-        recordFileOffline(item, buffer.byteLength);
+        cacheResponseAndRecordOffline(item, resClone, buffer.byteLength);
 
         // Find companion source file in current folder if available
         let companionHtml = "";
@@ -2837,13 +3016,14 @@
       codeLines.innerHTML = "";
 
       try {
-        const res = await fetch(item.download_url, { signal: fetchSignal });
+        const res = await fetchWithOfflineFallback(item.download_url, { signal: fetchSignal });
         if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch file content.`);
+        const resClone = res.status === 200 ? res.clone() : null;
         const text = await res.text();
         currentRawText = text;
 
         const byteSize = new Blob([text]).size;
-        recordFileOffline(item, byteSize);
+        cacheResponseAndRecordOffline(item, resClone, byteSize);
 
         const lines = text.split(/\r\n|\r|\n/);
         const lineCount = lines.length;
@@ -3547,10 +3727,44 @@
         }
 
         if (pathSegments.length >= 2) {
+          const platform = platformHint || (host.includes("gitlab") ? "gitlab" : "gitea");
+          if (platform === "gitlab") {
+            const dashIdx = pathSegments.indexOf("-");
+            let branch = "HEAD";
+            let subPath = "";
+            let subType = "";
+            let projectSegments = pathSegments;
+            if (dashIdx !== -1) {
+              projectSegments = pathSegments.slice(0, dashIdx);
+              if ((pathSegments[dashIdx + 1] === "tree" || pathSegments[dashIdx + 1] === "blob") && pathSegments[dashIdx + 2]) {
+                subType = pathSegments[dashIdx + 1];
+                branch = pathSegments[dashIdx + 2];
+                if (pathSegments.length > dashIdx + 3) {
+                  subPath = pathSegments.slice(dashIdx + 3).join("/");
+                }
+              }
+            }
+            if (projectSegments.length >= 2) {
+              const name = projectSegments[projectSegments.length - 1];
+              const owner = projectSegments.slice(0, -1).join("/");
+              const res = { platform, host, owner, name, branch };
+              if (subPath) { res.subPath = subPath; res.subType = subType; }
+              return res;
+            }
+          }
           const owner = pathSegments[0];
           const name = pathSegments[1];
-          const platform = platformHint || (host.includes("gitlab") ? "gitlab" : "gitea");
-          return { platform, host, owner, name, branch: "HEAD" };
+          let branch = "HEAD";
+          let subPath = "";
+          if (pathSegments[2] === "src" && pathSegments[3] === "branch" && pathSegments[4]) {
+            branch = pathSegments[4];
+            if (pathSegments.length > 5) {
+              subPath = pathSegments.slice(5).join("/");
+            }
+          }
+          const res = { platform, host, owner, name, branch };
+          if (subPath) res.subPath = subPath;
+          return res;
         }
       } catch {
         return null;
@@ -3570,7 +3784,7 @@
   }
 
   async function loadCustomRepo(parsedRepo) {
-    if (searchInput) searchInput.value = "";
+    clearSearchFilter();
     currentRepo = {
       platform: parsedRepo.platform,
       host: parsedRepo.host,
@@ -3623,7 +3837,7 @@
   }
 
   function resetToDefaultRepo() {
-    if (searchInput) searchInput.value = "";
+    clearSearchFilter();
     currentRepo = { ...DEFAULT_REPO };
     updateRepoUI();
     closeDevModal();
@@ -3846,11 +4060,7 @@
       try {
         const items = await fetchContents(folderPath);
         currentItems = Array.isArray(items) ? items : [];
-        currentItems.sort((a, b) => {
-          if (a.type === "dir" && b.type !== "dir") return -1;
-          if (a.type !== "dir" && b.type === "dir") return 1;
-          return a.name.localeCompare(b.name);
-        });
+        sortItemsList(currentItems);
         renderPinnedSection();
         renderFileGrid(currentItems);
         renderSidebarTree(currentItems);

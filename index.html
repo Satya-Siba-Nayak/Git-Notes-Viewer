@@ -9,11 +9,21 @@
   <meta property="og:description" content="Turn any GitHub, GitLab, Codeberg, Gitea, or Bitbucket repository into an interactive study portal with offline caching." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://git-notes.satya-nayak.dev/" />
-  <link rel="stylesheet" href="style.css?v=8" />
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("studyportal_theme");
+        if (t === "light" || t === "sepia") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="style.css?v=9" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
-  <meta name="theme-color" content="#0d1117" />
+  <meta name="theme-color" id="themeColorMeta" content="#0d1117" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
@@ -28,7 +38,10 @@
         <h1 class="logo" id="logo" title="Study Portal">📚 Study Portal</h1>
         <div class="repo-badge hidden" id="repoBadge"></div>
       </div>
-      <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close sidebar">✕</button>
+      <div class="sidebar-header-actions">
+        <button type="button" class="sidebar-action-btn" id="refreshRepoBtn" title="Refresh repository tree & current folder" aria-label="Refresh repository">🔄</button>
+        <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close sidebar">✕</button>
+      </div>
     </div>
     <div class="search-wrapper">
       <span class="search-icon">🔍</span>
@@ -197,6 +210,7 @@
             <button type="button" class="sort-pill" id="sortTypeBtn" data-sort="type">Type</button>
           </div>
           <button type="button" class="view-mode-btn" id="viewModeToggleBtn" title="Toggle Grid / List view">☰ List</button>
+          <button type="button" class="view-mode-btn" id="folderRefreshBtn" title="Refresh folder & repository cache">🔄</button>
         </div>
       </div>
 
@@ -532,6 +546,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>
