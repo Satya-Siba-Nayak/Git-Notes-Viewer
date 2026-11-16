@@ -991,6 +991,8 @@ button {
 }
 
 .viewer-fallback {
+  position: relative;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1627,6 +1629,120 @@ h4:hover .header-anchor {
 #mediaAudio {
   width: 100%;
   margin-top: 10px;
+}
+
+/* ===== External Link Shortcut Viewer & Badges ===== */
+.link-viewer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-primary);
+  z-index: 10;
+}
+
+.link-shortcut-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 36px 32px;
+  width: 100%;
+  max-width: 540px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  box-shadow: var(--shadow-lg);
+}
+
+.link-shortcut-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(88, 166, 255, 0.18), rgba(63, 185, 80, 0.18));
+  border: 2px solid var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+}
+
+.link-shortcut-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(88, 166, 255, 0.14);
+  color: var(--accent);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+}
+
+.link-shortcut-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.link-shortcut-domain {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.link-shortcut-url {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--accent);
+  word-break: break-all;
+  text-decoration: none;
+  transition: border-color var(--transition), background var(--transition);
+}
+.link-shortcut-url:hover {
+  border-color: var(--accent);
+  text-decoration: underline;
+}
+
+.link-shortcut-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.link-open-btn {
+  padding: 10px 20px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: rgba(88, 166, 255, 0.14);
+  color: var(--accent);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  text-decoration: none;
+}
+.link-card-badge:hover {
+  background: rgba(88, 166, 255, 0.24);
+  text-decoration: underline;
 }
 
 /* ===== Toast Pill (Android/iOS Style) ===== */

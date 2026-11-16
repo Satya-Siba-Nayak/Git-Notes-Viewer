@@ -19,7 +19,7 @@
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="style.css?v=9" />
+  <link rel="stylesheet" href="style.css?v=10" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -240,7 +240,7 @@
         </div>
 
         <!-- Office & PDF iframe viewer -->
-        <iframe id="viewerFrame" title="Document Viewer" sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
+        <iframe id="viewerFrame" title="Document Viewer" allow="fullscreen"></iframe>
 
         <!-- In-Browser Code & Text Viewer -->
         <div class="code-viewer hidden" id="codeViewer">
@@ -374,6 +374,33 @@
                 <p class="audio-sub" id="audioSub">Audio track</p>
               </div>
               <audio id="mediaAudio" controls preload="metadata" crossorigin="anonymous"></audio>
+            </div>
+          </div>
+        </div>
+
+        <!-- External Link Shortcut Viewer (.url, .webloc, .website, .desktop) -->
+        <div class="link-viewer hidden" id="linkViewer">
+          <div class="link-shortcut-card">
+            <div class="link-shortcut-icon">🔗</div>
+            <span class="link-shortcut-badge">EXTERNAL LINK SHORTCUT</span>
+            <h2 class="link-shortcut-title" id="linkShortcutTitle">External Resource</h2>
+            <p class="link-shortcut-domain" id="linkShortcutDomain">Redirect link</p>
+            <a
+              id="linkShortcutUrlBox"
+              class="link-shortcut-url"
+              href="#"
+              target="_blank"
+              rel="noopener noreferrer"
+            >https://…</a>
+            <div class="link-shortcut-actions">
+              <a
+                id="linkShortcutOpenBtn"
+                class="btn btn-primary link-open-btn"
+                href="#"
+                target="_blank"
+                rel="noopener noreferrer"
+              >🔗 Open Link in New Tab ↗</a>
+              <button type="button" class="btn" id="linkShortcutCopyBtn">📋 Copy Link</button>
             </div>
           </div>
         </div>
@@ -546,6 +573,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>

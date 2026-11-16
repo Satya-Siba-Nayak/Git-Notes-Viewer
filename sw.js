@@ -1,15 +1,15 @@
 /* =========================================================
-   Service Worker – Study Portal PWA (v9)
+   Service Worker – Study Portal PWA (v10)
    Two-Tier Caching: App Shell + Offline Repository Data Cache
    ========================================================= */
 
-const SHELL_CACHE = "studyportal-shell-v9";
+const SHELL_CACHE = "studyportal-shell-v10";
 const DATA_CACHE = "studyportal-data-v7";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/style.css?v=9",
-  "/app.js?v=9",
+  "/style.css?v=10",
+  "/app.js?v=10",
   "/manifest.json",
   "/icons/icon-192.png",
   "/icons/icon-512.png"
@@ -48,19 +48,27 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   const url = new URL(e.request.url);
+  if (url.protocol !== "http:" && url.protocol !== "https:") return;
 
   // 1. External Git API trees & raw study files: Network-First -> Offline Data Cache Fallback
   const isGitData = GIT_DATA_HOSTS.some((h) => url.hostname === h || url.hostname.endsWith("." + h));
   if (isGitData || url.origin !== self.location.origin) {
-    // Never intercept third-party document viewer iframes
-    if (url.hostname.includes("docs.google.com") || url.hostname.includes("officeapps.live.com")) {
+    // Never intercept third-party document viewer iframes or cross-origin navigations
+    if (
+      e.request.mode === "navigate" ||
+      e.request.destination === "iframe" ||
+      e.request.destination === "embed" ||
+      e.request.destination === "object" ||
+      url.hostname.includes("docs.google.com") ||
+      url.hostname.includes("officeapps.live.com")
+    ) {
       return;
     }
     e.respondWith(
       fetch(e.request)
         .then((res) => {
           const contentLength = parseInt(res.headers.get("content-length") || "0", 10);
-          if (res && res.status === 200 && isGitData && contentLength < 5 * 1024 * 1024) {
+          if (res && res.status === 200 && isGitData && contentLength < 15 * 1024 * 1024) {
             const clone = res.clone();
             caches.open(DATA_CACHE).then((cache) => cache.put(e.request, clone));
           }

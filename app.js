@@ -350,6 +350,12 @@
   const csvRawToggle = document.getElementById("csvRawToggle");
   const copyCsvBtn = document.getElementById("copyCsvBtn");
   const csvTableContainer = document.getElementById("csvTableContainer");
+  const linkViewer = document.getElementById("linkViewer");
+  const linkShortcutTitle = document.getElementById("linkShortcutTitle");
+  const linkShortcutDomain = document.getElementById("linkShortcutDomain");
+  const linkShortcutUrlBox = document.getElementById("linkShortcutUrlBox");
+  const linkShortcutOpenBtn = document.getElementById("linkShortcutOpenBtn");
+  const linkShortcutCopyBtn = document.getElementById("linkShortcutCopyBtn");
 
   // ── State ───────────────────────────────────────────────
   const THEME_KEY = "studyportal_theme";
@@ -363,7 +369,9 @@
   let currentMediaObjectUrl = null;
   let repoTreeCache = {}; // Keyed by platform_host_owner_name_branch
   let inFlightTrees = {}; // Prevents duplicate parallel requests on boot
-  let currentDocEngine = "google"; // "google" | "office" | "native"
+  let shortcutUrlCache = {}; // Keyed by item.download_url -> resolved external URL
+  let currentDocEngine = "native"; // "native" | "google" | "office"
+  let viewerLoadTimer = null;
   let isCodeWrapped = false;
   let isMarkdownRaw = false;
   let activeFetchController = null;
@@ -405,12 +413,13 @@
     xml: "XML", svg: "SVG",
     yaml: "YAML", yml: "YAML",
     toml: "TOML", ini: "INI", env: "ENV",
-    txt: "Plain Text", log: "Log", csv: "CSV", tsv: "TSV",
+    txt: "Plain Text", log: "Log", csv: "CSV", tsv: "TSV", bak: "Backup Source", rtf: "Rich Text",
     sh: "Shell", bash: "Bash", zsh: "Zsh", bat: "Batch", ps1: "PowerShell",
     dockerfile: "Dockerfile", makefile: "Makefile"
   };
 
   const DOC_EXTS = ["pdf", "ppt", "pptx", "doc", "docx", "xls", "xlsx"];
+  const LINK_EXTS = ["url", "webloc", "website", "desktop"];
   const MD_EXTS = ["md", "markdown"];
   const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico"];
   const VIDEO_EXTS = ["mp4", "webm", "ogg", "mov", "mkv"];
@@ -421,6 +430,41 @@
   function getFileExt(name) {
     const idx = name.lastIndexOf(".");
     return idx > 0 ? name.slice(idx + 1).toLowerCase() : "";
+  }
+
+  function isLinkShortcut(name) {
+    return LINK_EXTS.includes(getFileExt(name));
+  }
+
+  function parseLinkShortcutUrl(text) {
+    if (!text) return null;
+    // 1. INI-style (.url, .website, .desktop): URL=https://...
+    const iniMatch = text.match(/^\s*URL\s*=\s*(.+)$/im);
+    if (iniMatch && iniMatch[1]) {
+      const candidate = iniMatch[1].trim().replace(/^["']|["']$/g, "");
+      if (/^https?:\/\//i.test(candidate)) return candidate;
+    }
+    // 2. macOS .webloc XML plist: <key>URL</key><string>https://...</string>
+    const plistMatch =
+      text.match(/<key>\s*URL\s*<\/key>\s*<string>\s*([^<]+?)\s*<\/string>/i) ||
+      text.match(/<string>\s*(https?:\/\/[^<\s]+)\s*<\/string>/i);
+    if (plistMatch && plistMatch[1]) {
+      const candidate = plistMatch[1].trim();
+      if (/^https?:\/\//i.test(candidate)) return candidate;
+    }
+    // 3. JSON format: { "url": "https://..." }
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed.url === "string" && /^https?:\/\//i.test(parsed.url.trim())) {
+        return parsed.url.trim();
+      }
+    } catch {}
+    // 4. Plain URL fallback
+    const rawMatch = text.match(/(https?:\/\/[^\s"'<>]+)/i);
+    if (rawMatch && rawMatch[1]) {
+      return rawMatch[1].trim();
+    }
+    return null;
   }
 
   function isNotebook(name) {
@@ -464,6 +508,7 @@
 
   function isViewable(name) {
     return (
+      isLinkShortcut(name) ||
       isDocument(name) ||
       isMarkdown(name) ||
       isNotebook(name) ||
@@ -479,6 +524,7 @@
   function getIcon(item) {
     if (item.type === "dir") return "📁";
     const ext = getFileExt(item.name);
+    if (LINK_EXTS.includes(ext)) return "🔗";
     if (ext === "pdf") return "📄";
     if (ext === "ipynb") return "📓";
     if (["csv", "tsv"].includes(ext)) return "📊";
@@ -492,8 +538,8 @@
     if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "📦";
     if (ext === "class" || ext === "jar") return "☕";
     if (BINARY_EXTS.includes(ext)) return "⚙️";
-    if (["py", "js", "ts", "html", "css", "java", "c", "cpp", "cs", "sql", "sh", "rs", "go"].includes(ext)) return "💻";
-    if (["txt", "log", "json", "yaml", "yml"].includes(ext)) return "📄";
+    if (["py", "js", "ts", "html", "css", "java", "c", "cpp", "cs", "sql", "sh", "rs", "go", "bak"].includes(ext)) return "💻";
+    if (["txt", "log", "json", "yaml", "yml", "rtf"].includes(ext)) return "📄";
     return "📄";
   }
 
@@ -745,12 +791,17 @@
       const card = document.createElement("div");
       card.className = "pinned-card";
       const folder = item.path.includes("/") ? item.path.substring(0, item.path.lastIndexOf("/")) : "Root";
+      const isShortcut = item.type !== "dir" && isLinkShortcut(item.name);
+      const displayName = isShortcut ? item.name.replace(/\.(url|webloc|website|desktop)$/i, "") : item.name;
+      if (isShortcut && !shortcutUrlCache[item.download_url]) {
+        resolveShortcutUrl(item);
+      }
 
       card.innerHTML = `
         <div class="pinned-card-main">
           <span class="pinned-card-icon">${getIcon(item)}</span>
           <div class="pinned-card-info">
-            <span class="pinned-card-name">${escapeHtml(item.name)}</span>
+            <span class="pinned-card-name">${escapeHtml(displayName)}${isShortcut ? " ↗" : ""}</span>
             <span class="pinned-card-path">📁 ${escapeHtml(folder)}</span>
           </div>
         </div>
@@ -758,7 +809,7 @@
       `;
 
       card.querySelector(".pinned-card-main").addEventListener("click", () => {
-        openViewer(item);
+        handleItemClick(item);
       });
 
       card.querySelector(".pinned-remove-btn").addEventListener("click", (e) => {
@@ -832,7 +883,7 @@
 
   async function cacheResponseAndRecordOffline(item, responseClone, byteSize = 0) {
     if (!item || !item.download_url || !("caches" in window)) return false;
-    if (byteSize > 5 * 1024 * 1024) return false;
+    if (byteSize > 15 * 1024 * 1024) return false;
     try {
       const cache = await caches.open(OFFLINE_CACHE_NAME);
       if (responseClone && responseClone.status === 200) {
@@ -876,6 +927,26 @@
         } catch {}
       }
       throw err;
+    }
+  }
+
+  async function resolveShortcutUrl(item, signal) {
+    if (!item || !item.download_url) return null;
+    if (shortcutUrlCache[item.download_url]) return shortcutUrlCache[item.download_url];
+    try {
+      const res = await fetchWithOfflineFallback(item.download_url, signal ? { signal } : {});
+      if (!res.ok) return null;
+      const resClone = res.status === 200 ? res.clone() : null;
+      const text = await res.text();
+      const byteSize = new Blob([text]).size;
+      cacheResponseAndRecordOffline(item, resClone, byteSize);
+      const targetUrl = parseLinkShortcutUrl(text);
+      if (targetUrl) {
+        shortcutUrlCache[item.download_url] = targetUrl;
+      }
+      return targetUrl;
+    } catch {
+      return null;
     }
   }
 
@@ -1484,7 +1555,7 @@
             const data = await res.json();
             if (data && Array.isArray(data.tree) && !data.truncated) {
               const items = data.tree
-                .filter((it) => !it.path.split("/").some((seg) => seg.startsWith(".")))
+                .filter((it) => !it.path.split("/").some((seg) => seg.startsWith(".") || seg.startsWith("~$")))
                 .map((it) => {
                   const parts = it.path.split("/");
                   const name = parts[parts.length - 1];
@@ -1536,7 +1607,7 @@
 
           if (ok && allEntries.length > 0 && page <= 10) {
             const items = allEntries
-              .filter((it) => !it.path.split("/").some((seg) => seg.startsWith(".")))
+              .filter((it) => !it.path.split("/").some((seg) => seg.startsWith(".") || seg.startsWith("~$")))
               .map((it) => {
                 const safePath = it.path.split("/").map(encodeURIComponent).join("/");
                 return {
@@ -1607,11 +1678,12 @@
     }
 
     if (tree && Array.isArray(tree)) {
+      const visibleTree = tree.filter((it) => !it.name.startsWith(".") && !it.name.startsWith("~$"));
       if (!path) {
-        return tree.filter((it) => !it.path.includes("/"));
+        return visibleTree.filter((it) => !it.path.includes("/"));
       }
       const prefix = path + "/";
-      return tree.filter((it) => it.path.startsWith(prefix) && !it.path.slice(prefix.length).includes("/"));
+      return visibleTree.filter((it) => it.path.startsWith(prefix) && !it.path.slice(prefix.length).includes("/"));
     }
 
     const cacheKey = `${CACHE_PREFIX}${currentRepo.platform}_${currentRepo.host}_${currentRepo.owner}_${currentRepo.name}_${path}`;
@@ -1628,7 +1700,7 @@
     try {
       const adapter = ADAPTERS[currentRepo.platform] || ADAPTERS.github;
       const items = await adapter.fetchContents(currentRepo, path);
-      const cleaned = (items || []).filter((item) => !item.name.startsWith("."));
+      const cleaned = (items || []).filter((item) => !item.name.startsWith(".") && !item.name.startsWith("~$"));
 
       if (Array.isArray(cleaned)) {
         safeSetStorage(cacheKey, JSON.stringify(cleaned));
@@ -1704,6 +1776,7 @@
     markdownViewer.classList.add("hidden");
     if (notebookViewer) notebookViewer.classList.add("hidden");
     if (csvViewer) csvViewer.classList.add("hidden");
+    if (linkViewer) linkViewer.classList.add("hidden");
     mediaViewer.classList.add("hidden");
     viewerFallback.classList.add("hidden");
 
@@ -1746,8 +1819,16 @@
       try { URL.revokeObjectURL(currentMediaObjectUrl); } catch {}
       currentMediaObjectUrl = null;
     }
+    if (viewerLoadTimer) {
+      clearTimeout(viewerLoadTimer);
+      viewerLoadTimer = null;
+    }
     if (viewerFrame) {
-      viewerFrame.src = "about:blank";
+      viewerFrame.onload = null;
+      viewerFrame.onerror = null;
+      if (viewerFrame.src && viewerFrame.src !== "about:blank") {
+        viewerFrame.src = "about:blank";
+      }
       viewerFrame.classList.add("hidden");
     }
 
@@ -1758,6 +1839,7 @@
     if (folderReadmeSection) folderReadmeSection.classList.add("hidden");
     if (markdownToc) markdownToc.classList.add("hidden");
     if (mdTocToggle) mdTocToggle.classList.add("hidden");
+    if (contentLoader) contentLoader.classList.add("hidden");
 
     fileGrid.classList.add("hidden");
     viewer.classList.add("hidden");
@@ -1765,6 +1847,7 @@
     markdownViewer.classList.add("hidden");
     if (notebookViewer) notebookViewer.classList.add("hidden");
     if (csvViewer) csvViewer.classList.add("hidden");
+    if (linkViewer) linkViewer.classList.add("hidden");
     mediaViewer.classList.add("hidden");
     errorState.classList.add("hidden");
     emptyState.classList.add("hidden");
@@ -1785,6 +1868,7 @@
 
   function renderFileGrid(items, isSearchResult = false) {
     clearFileCards();
+    if (contentLoader) contentLoader.classList.add("hidden");
     fileGrid.classList.remove("hidden");
 
     if (items.length === 0) {
@@ -1805,7 +1889,19 @@
       card.setAttribute("role", "button");
       card.setAttribute("aria-label", item.name);
 
+      const isShortcut = item.type !== "dir" && isLinkShortcut(item.name);
+      const cachedTargetUrl = isShortcut ? shortcutUrlCache[item.download_url] : null;
+
       let meta = item.type === "dir" ? "Folder" : formatSize(item.size) || "File";
+      if (isShortcut) {
+        let domainLabel = "Open Link ↗";
+        if (cachedTargetUrl) {
+          try {
+            domainLabel = `${new URL(cachedTargetUrl).hostname.replace(/^www\./, "")} ↗`;
+          } catch {}
+        }
+        meta = `<a class="link-card-badge" href="${escapeHtml(cachedTargetUrl || "#")}" target="_blank" rel="noopener noreferrer" title="Open link in new tab">🔗 ${escapeHtml(domainLabel)}</a>`;
+      }
       if (isSearchResult && item.path.includes("/")) {
         const folder = item.path.substring(0, item.path.lastIndexOf("/"));
         meta = `<span class="search-path-badge">${escapeHtml(folder)}</span> ${meta}`;
@@ -1816,16 +1912,46 @@
 
       const isFile = item.type !== "dir";
       const starred = isStarred(item);
+      const displayName = isShortcut ? item.name.replace(/\.(url|webloc|website|desktop)$/i, "") : item.name;
 
       card.innerHTML = `
         <span class="file-card-icon">${getIcon(item)}</span>
         <div class="file-card-info">
-          <div class="file-card-name">${escapeHtml(item.name)}</div>
+          <div class="file-card-name">${escapeHtml(displayName)}</div>
           <div class="file-card-meta">${meta}</div>
         </div>
         ${isFile ? `<button type="button" class="card-star-btn ${starred ? "starred" : ""}" data-path="${escapeHtml(item.path)}" title="Pin / star file">${starred ? "⭐" : "☆"}</button>` : ""}
-        <span class="file-card-arrow">${item.type === "dir" ? "›" : ""}</span>
+        <span class="file-card-arrow">${item.type === "dir" ? "›" : isShortcut ? "↗" : ""}</span>
       `;
+
+      const linkBadge = card.querySelector(".link-card-badge");
+      if (linkBadge) {
+        linkBadge.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const resolved = shortcutUrlCache[item.download_url];
+          if (!resolved) {
+            e.preventDefault();
+            handleItemClick(item);
+          }
+        });
+      }
+
+      if (isShortcut && !cachedTargetUrl) {
+        resolveShortcutUrl(item).then((targetUrl) => {
+          if (!targetUrl || !card.isConnected) return;
+          const badge = card.querySelector(".link-card-badge");
+          if (badge) {
+            badge.href = targetUrl;
+            try {
+              const host = new URL(targetUrl).hostname.replace(/^www\./, "");
+              badge.textContent = `🔗 ${host} ↗`;
+              badge.title = `Open ${targetUrl} in new tab`;
+            } catch {
+              badge.textContent = "🔗 Open Link ↗";
+            }
+          }
+        });
+      }
 
       card.addEventListener("click", () => {
         if (isSearchResult) {
@@ -1912,15 +2038,20 @@
     }
 
     items.forEach((item) => {
+      const isShortcut = item.type !== "dir" && isLinkShortcut(item.name);
+      const displayName = isShortcut ? item.name.replace(/\.(url|webloc|website|desktop)$/i, "") : item.name;
       const el = document.createElement("button");
       el.type = "button";
       el.className = "tree-item";
       el.dataset.name = item.name.toLowerCase();
       el.innerHTML = `
         <span class="tree-item-icon">${getIcon(item)}</span>
-        <span class="tree-item-name">${escapeHtml(item.name)}</span>
-        ${item.type === "dir" ? '<span class="tree-item-arrow">›</span>' : ""}
+        <span class="tree-item-name">${escapeHtml(displayName)}</span>
+        ${item.type === "dir" ? '<span class="tree-item-arrow">›</span>' : isShortcut ? '<span class="tree-item-arrow">↗</span>' : ""}
       `;
+      if (isShortcut && !shortcutUrlCache[item.download_url]) {
+        resolveShortcutUrl(item);
+      }
       el.addEventListener("click", () => {
         handleItemClick(item);
         closeSidebar();
@@ -1984,6 +2115,12 @@
   function handleItemClick(item) {
     if (item.type === "dir") {
       navigateTo(item.path);
+    } else if (isLinkShortcut(item.name)) {
+      const cachedTarget = shortcutUrlCache[item.download_url];
+      if (cachedTarget) {
+        window.open(cachedTarget, "_blank", "noopener,noreferrer");
+      }
+      openViewer(item);
     } else if (isViewable(item.name)) {
       openViewer(item);
     } else if (item.download_url) {
@@ -2694,6 +2831,61 @@
     const ext = getFileExt(item.name);
     const encodedUrl = encodeURIComponent(item.download_url);
 
+    // 0. EXTERNAL LINK SHORTCUT VIEWER (.url, .webloc, .website, .desktop)
+    if (isLinkShortcut(item.name)) {
+      viewer.classList.remove("hidden");
+      if (linkViewer) linkViewer.classList.remove("hidden");
+      viewerLoading.classList.remove("loaded");
+
+      const cleanTitle = item.name.replace(/\.(url|webloc|website|desktop)$/i, "");
+      if (linkShortcutTitle) linkShortcutTitle.textContent = cleanTitle;
+      if (linkShortcutDomain) linkShortcutDomain.textContent = "Resolving external redirect link…";
+      if (linkShortcutUrlBox) {
+        linkShortcutUrlBox.textContent = "Loading…";
+        linkShortcutUrlBox.href = "#";
+      }
+      if (linkShortcutOpenBtn) {
+        linkShortcutOpenBtn.href = "#";
+      }
+
+      try {
+        const targetUrl = await resolveShortcutUrl(item, fetchSignal);
+        if (currentFile !== item) return;
+
+        if (!targetUrl) {
+          throw new Error("Could not find a valid http/https URL inside this shortcut file.");
+        }
+
+        let hostLabel = "External website";
+        try {
+          hostLabel = `Redirects to ${new URL(targetUrl).hostname.replace(/^www\./, "")}`;
+        } catch {}
+
+        if (linkShortcutDomain) linkShortcutDomain.textContent = hostLabel;
+        if (linkShortcutUrlBox) {
+          linkShortcutUrlBox.textContent = targetUrl;
+          linkShortcutUrlBox.href = targetUrl;
+        }
+        if (linkShortcutOpenBtn) {
+          linkShortcutOpenBtn.href = targetUrl;
+        }
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        if (linkShortcutDomain) linkShortcutDomain.textContent = `⚠️ ${err.message}`;
+        if (linkShortcutUrlBox) {
+          linkShortcutUrlBox.textContent = item.download_url || "Unavailable";
+          linkShortcutUrlBox.href = item.download_url || "#";
+        }
+        if (linkShortcutOpenBtn) {
+          linkShortcutOpenBtn.href = item.download_url || "#";
+        }
+      } finally {
+        viewerLoading.classList.add("loaded");
+      }
+      closeSidebar();
+      return;
+    }
+
     // 1. MARKDOWN NOTES VIEWER
     if (isMarkdown(item.name)) {
       viewer.classList.remove("hidden");
@@ -3010,7 +3202,18 @@
       codeViewer.classList.remove("hidden");
       viewerLoading.classList.remove("loaded");
 
-      const langName = CODE_EXT_MAP[ext] || (ext ? ext.toUpperCase() : "TEXT");
+      let effectiveExt = ext;
+      if (ext === "bak") {
+        const stem = item.name.slice(0, -4);
+        const innerExt = getFileExt(stem);
+        if (innerExt && innerExt in CODE_EXT_MAP) {
+          effectiveExt = innerExt;
+        }
+      }
+      const langName =
+        ext === "bak" && effectiveExt !== "bak"
+          ? `${CODE_EXT_MAP[effectiveExt]} (Backup)`
+          : CODE_EXT_MAP[effectiveExt] || (ext ? ext.toUpperCase() : "TEXT");
       codeLangBadge.textContent = langName;
       codeStats.textContent = "Loading file…";
       codeLines.innerHTML = "";
@@ -3048,7 +3251,7 @@
             row.className = "code-line";
             const codeHtml = (skipHeavyHighlight || l.length > 600)
               ? (escapeHtml(l) || "&nbsp;")
-              : highlightSyntax(l, ext);
+              : highlightSyntax(l, effectiveExt);
             row.innerHTML = `<span class="line-num">${idx + 1}</span><span class="line-code">${codeHtml}</span>`;
             frag.appendChild(row);
           }
@@ -3078,36 +3281,117 @@
       viewerFrame.classList.remove("hidden");
       viewerLoading.classList.remove("loaded");
       viewerFallback.classList.remove("hidden");
+      fallbackDownload.href = item.download_url || "#";
+      fallbackDownload.setAttribute("download", item.name || "");
+      downloadBtn.setAttribute("download", item.name || "");
+      closeSidebar();
 
-      let viewerUrl = "";
       if (ext === "pdf") {
-        const useLocalPdf = !navigator.onLine || isFileSavedOffline(item);
-        if (useLocalPdf) {
-          currentDocEngine = "native";
-          viewerUrl = item.download_url;
-          fallbackNotice.textContent = "Native PDF Viewer (Offline Ready)";
-        } else {
-          currentDocEngine = "google";
-          viewerUrl = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
-          fallbackNotice.textContent = "PDF document viewer";
-        }
+        currentDocEngine = "native";
+        const sizeLabel = item.size ? ` (${formatSize(item.size)})` : "";
+        fallbackNotice.textContent = `Loading PDF document${sizeLabel}…`;
         fallbackLink.href = item.download_url;
-        fallbackLink.textContent = "Open PDF Directly";
-      } else {
-        currentDocEngine = "office";
-        viewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodedUrl}`;
-        fallbackNotice.textContent = "Microsoft Office document viewer";
-        fallbackLink.href = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
-        fallbackLink.textContent = "Open in Google Docs";
+        fallbackLink.textContent = "Open PDF in New Tab";
+        if (fallbackEngineToggle) fallbackEngineToggle.textContent = "Try Google Viewer";
+
+        try {
+          let res = null;
+          if ("caches" in window && (!navigator.onLine || isFileSavedOffline(item))) {
+            try {
+              const cache = await caches.open(OFFLINE_CACHE_NAME);
+              res = await cache.match(item.download_url);
+            } catch {}
+          }
+          if (!res) {
+            res = await fetchWithOfflineFallback(item.download_url, { signal: fetchSignal });
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch PDF.`);
+          const resClone = res.status === 200 ? res.clone() : null;
+          const buffer = await res.arrayBuffer();
+          if (currentFile !== item) return;
+
+          cacheResponseAndRecordOffline(item, resClone, buffer.byteLength);
+
+          const pdfBlob = new Blob([buffer], { type: "application/pdf" });
+          if (currentMediaObjectUrl) URL.revokeObjectURL(currentMediaObjectUrl);
+          currentMediaObjectUrl = URL.createObjectURL(pdfBlob);
+
+          fallbackLink.href = currentMediaObjectUrl;
+          fallbackDownload.href = currentMediaObjectUrl;
+          downloadBtn.href = currentMediaObjectUrl;
+
+          // If the browser disables inline PDF viewing in iframes (e.g., mobile Android), use Google Docs viewer while keeping instant Blob download/new-tab links
+          if (navigator.pdfViewerEnabled === false && navigator.onLine) {
+            currentDocEngine = "google";
+            if (fallbackEngineToggle) fallbackEngineToggle.textContent = "Use Native Viewer";
+            fallbackNotice.textContent = `PDF Ready (${formatSize(buffer.byteLength)}) • Mobile Preview`;
+            loadIframeWithTimeout(`https://docs.google.com/gview?url=${encodedUrl}&embedded=true`);
+            return;
+          }
+
+          viewerFrame.removeAttribute("sandbox");
+          viewerFrame.onload = () => {
+            viewerLoading.classList.add("loaded");
+          };
+          viewerFrame.src = currentMediaObjectUrl;
+          fallbackNotice.textContent = `Native PDF Viewer • ${formatSize(buffer.byteLength)}`;
+          viewerLoading.classList.add("loaded");
+        } catch (err) {
+          if (err.name === "AbortError") return;
+          currentDocEngine = "google";
+          if (fallbackEngineToggle) fallbackEngineToggle.textContent = "Use Native Viewer";
+          fallbackNotice.textContent = "Google Docs PDF Viewer";
+          loadIframeWithTimeout(`https://docs.google.com/gview?url=${encodedUrl}&embedded=true`);
+        }
+        return;
       }
 
-      viewerFrame.src = viewerUrl;
-      viewerFrame.onload = () => {
-        viewerLoading.classList.add("loaded");
-      };
-      fallbackDownload.href = item.download_url || "#";
-      closeSidebar();
+      currentDocEngine = "office";
+      if (fallbackEngineToggle) fallbackEngineToggle.textContent = "Switch Viewer";
+      const viewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodedUrl}`;
+      fallbackNotice.textContent = "Microsoft Office document viewer";
+      fallbackLink.href = `https://docs.google.com/gview?url=${encodedUrl}&embedded=true`;
+      fallbackLink.textContent = "Open in Google Docs";
+      loadIframeWithTimeout(viewerUrl);
+      return;
     }
+  }
+
+  function loadIframeWithTimeout(url, timeoutMs = 5000) {
+    if (!viewerFrame) return;
+    if (viewerLoadTimer) {
+      clearTimeout(viewerLoadTimer);
+      viewerLoadTimer = null;
+    }
+    viewerFrame.onload = () => {
+      if (viewerFrame.src === "about:blank") return;
+      if (viewerLoadTimer) {
+        clearTimeout(viewerLoadTimer);
+        viewerLoadTimer = null;
+      }
+      viewerLoading.classList.add("loaded");
+    };
+    viewerFrame.onerror = () => {
+      if (viewerLoadTimer) {
+        clearTimeout(viewerLoadTimer);
+        viewerLoadTimer = null;
+      }
+      viewerLoading.classList.add("loaded");
+    };
+    viewerFrame.src = url;
+    viewerLoadTimer = setTimeout(() => {
+      viewerLoadTimer = null;
+      viewerLoading.classList.add("loaded");
+    }, timeoutMs);
+  }
+
+  if (linkShortcutCopyBtn) {
+    linkShortcutCopyBtn.addEventListener("click", async () => {
+      const urlToCopy = linkShortcutOpenBtn ? linkShortcutOpenBtn.href : "";
+      if (!urlToCopy || urlToCopy.endsWith("#")) return;
+      const ok = await copyToClipboard(urlToCopy);
+      showToast(ok ? "✅ Link copied to clipboard!" : "⚠️ Failed to copy link.");
+    });
   }
 
   // ── Switch Document Viewer Engine ───────────────────────
@@ -3117,26 +3401,41 @@
       const encodedUrl = encodeURIComponent(currentFile.download_url);
       const ext = getFileExt(currentFile.name);
 
-      viewerLoading.classList.remove("loaded");
-
-      if (currentDocEngine === "google") {
-        if (ext === "pdf") {
-          currentDocEngine = "native";
-          viewerFrame.src = currentFile.download_url;
-          fallbackNotice.textContent = "Native Browser PDF Viewer";
+      if (ext === "pdf") {
+        if (currentDocEngine === "native") {
+          currentDocEngine = "google";
+          viewerLoading.classList.remove("loaded");
+          fallbackNotice.textContent = "Google Docs PDF Viewer";
+          fallbackEngineToggle.textContent = "Use Native Viewer";
+          loadIframeWithTimeout(`https://docs.google.com/gview?url=${encodedUrl}&embedded=true`);
         } else {
-          currentDocEngine = "office";
-          viewerFrame.src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodedUrl}`;
-          fallbackNotice.textContent = "Office Live Viewer";
+          if (currentMediaObjectUrl) {
+            currentDocEngine = "native";
+            if (viewerLoadTimer) {
+              clearTimeout(viewerLoadTimer);
+              viewerLoadTimer = null;
+            }
+            viewerFrame.removeAttribute("sandbox");
+            viewerFrame.src = currentMediaObjectUrl;
+            fallbackNotice.textContent = "Native Browser PDF Viewer";
+            fallbackEngineToggle.textContent = "Try Google Viewer";
+            viewerLoading.classList.add("loaded");
+          } else {
+            openViewer(currentFile, false);
+          }
         }
-      } else if (currentDocEngine === "office") {
-        currentDocEngine = "google";
-        viewerFrame.src = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
-        fallbackNotice.textContent = "Google Docs Viewer";
+        return;
+      }
+
+      viewerLoading.classList.remove("loaded");
+      if (currentDocEngine === "google") {
+        currentDocEngine = "office";
+        fallbackNotice.textContent = "Office Live Viewer";
+        loadIframeWithTimeout(`https://view.officeapps.live.com/op/embed.aspx?src=${encodedUrl}`);
       } else {
         currentDocEngine = "google";
-        viewerFrame.src = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
         fallbackNotice.textContent = "Google Docs Viewer";
+        loadIframeWithTimeout(`https://docs.google.com/gview?url=${encodedUrl}&embedded=true`);
       }
     });
   }
